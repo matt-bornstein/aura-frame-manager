@@ -89,29 +89,30 @@ class AuraManager:
         image_path.mkdir(parents=True, exist_ok=True)
 
         for item in assets:
-            print(f"{counter}: Checking {item['id']}")
+            # print(f"{counter}: Checking {item['id']}")
             counter += 1
 
             try:
                 is_video = False
 
-                # get file name
+                # get file name and construct URL
                 if (
                     item["video_file_name"] is not None
                     and item["video_file_name"] != "null"
                 ):
                     file_name = item["video_file_name"]
+                    url = item["video_url"]
                     is_video = True
                 else:
                     file_name = item["file_name"]
+                    url = f"https://imgproxy.pushd.com/{item['user_id']}/{file_name}"
 
                 if videos_only and not is_video:
                     print(f"{counter}: Skipping {item['id']}, not a video")
                     skipped += 1
                     continue
 
-                # construct the fetch URL and new filename
-                url = f"https://imgproxy.pushd.com/{item['user_id']}/{file_name}"
+                # construct new filename
                 new_filename = item["id"] + os.path.splitext(file_name)[1]
                 file_to_write = os.path.join(image_path, new_filename)
 
