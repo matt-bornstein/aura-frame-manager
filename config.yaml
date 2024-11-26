@@ -1,5 +1,6 @@
 ---
 base_file_path: images
+debug_file_path: debug
 
 accounts:
   -

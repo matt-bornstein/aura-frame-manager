@@ -1,5 +1,6 @@
 .DS_Store
 images/
+debug/
 frames.yaml
 
 # Byte-compiled / optimized / DLL files
