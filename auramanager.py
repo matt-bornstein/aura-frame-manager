@@ -89,8 +89,8 @@ class AuraManager:
         image_path.mkdir(parents=True, exist_ok=True)
 
         for item in assets:
-            # print(f"{counter}: Checking {item['id']}")
             counter += 1
+            # print(f"{counter}: Checking {item['id']}")
 
             try:
                 is_video = False
@@ -144,6 +144,17 @@ class AuraManager:
                 time.sleep(10)
 
         return counter - skipped
+
+    def list_assets_all(self, write_to_file=False):
+        # assets_all = []
+        for frame in self.config["frames"]:
+            assets = self.list_assets(frame["frame_id"], write_to_file)
+            # assets_all.append({
+            #     "frame": frame["frame_id"],
+            #     "assets": assets
+            # })
+
+        # return assets_all
 
     def start_batch_download(self, videos_only=False):
         for frame in self.config["frames"]:

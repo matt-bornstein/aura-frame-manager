@@ -5,6 +5,10 @@ description = "simple scripts to control aura frames"
 readme = "README.md"
 requires-python = ">=3.9"
 dependencies = [
+    "imgcat>=0.6.0",
+    "numpy>=2.0.2",
+    "opencv-python>=4.10.0.84",
+    "pillow>=11.0.0",
     "pyyaml>=6.0.2",
     "requests>=2.32.3",
 ]
