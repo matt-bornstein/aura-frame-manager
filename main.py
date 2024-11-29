@@ -11,11 +11,15 @@ def review_files():
         keep_files = data["keep_files"]
         delete_files = data["delete_files"]
     
+    deleted_files = len(os.listdir("/Users/mb/Documents/aura/nov 2024 export/deleted"))
+    files_in_folder = len(os.listdir("/Users/mb/Documents/aura/nov 2024 export"))
+
     # print the total number of files already reviewed
     # then print the total number of files to review
     # and print the number of files left to review
-    print(f"Already reviewed {len(keep_files) + len(delete_files)} files")
-    print(f"Files left to review: {len(os.listdir('/Users/mb/Documents/aura/nov 2024 export')) - (len(keep_files) + len(delete_files))}")
+    print(f"Already reviewed {deleted_files + len(keep_files) + len(delete_files)} files")
+    print(f"Files left to review: {files_in_folder - (len(keep_files) + len(delete_files))}")
+    print()
 
     # process all files in the folder "~/Documents/aura/nov 2024 export"
     # only process the files that are not in the keep_files or delete_files lists
@@ -25,7 +29,7 @@ def review_files():
     # if they don't want to keep the file, add the file name to the delete_files list
     # after processing each file, combine the keep_files and delete_files lists into a dictionary and write it to a json file
     for file in os.listdir("/Users/mb/Documents/aura/nov 2024 export"):
-        if file not in keep_files and file not in delete_files:
+        if os.path.isfile(f"/Users/mb/Documents/aura/nov 2024 export/{file}") and file not in keep_files and file not in delete_files:
             # if it's a video, extract the first frame and show it
             if file.endswith(".mp4"):
                 video_path = f"/Users/mb/Documents/aura/nov 2024 export/{file}"
@@ -43,10 +47,13 @@ def review_files():
                     imgcat(f)
             
             # prompt the user if they want to keep the file
-            user_input = input(f"{file} | Do you want to keep this file? (y/n): ")
-            if user_input == "y":
+            print(f"Files left to review: {files_in_folder - (len(keep_files) + len(delete_files))}")
+            user_input = input(f"{file} | Do you want to keep this file? (y or enter to keep, n to delete): ")
+            if user_input == "y" or user_input == "":
+                print(f"Keeping {file}")
                 keep_files.append(file)
             else:
+                print(f"Deleting {file}")
                 delete_files.append(file)
             
             # print a blank line to the terminal
@@ -60,6 +67,29 @@ def review_files():
             # write the dictionary to a json file
             with open("debug/reviewed-files.json", "w") as f:
                 json.dump(files_dict, f, indent=4)
+
+def remove_files():
+    # read the reviewed-files.json file
+    with open("debug/reviewed-files.json", "r") as f:
+        data = json.load(f)
+        keep_files = data["keep_files"]
+        delete_files = data["delete_files"]
+    
+    delete_files_new = []
+
+    # move the files in the delete_files list from the folder "~/Documents/aura/nov 2024 export"
+    # to the folder "~/Documents/aura/nov 2024 export/deleted"
+    for file in delete_files:
+        try:
+            os.rename(f"/Users/mb/Documents/aura/nov 2024 export/{file}", f"/Users/mb/Documents/aura/nov 2024 export/deleted/{file}")
+            print(f"Moved {file} to deleted folder")
+        except Exception as e:
+            print(f"Error moving file {file}: {e}")
+            delete_files_new.append(file)
+    
+    # write the updated delete_files list to the reviewed-files.json file
+    with open("debug/reviewed-files.json", "w") as f:
+        json.dump({"keep_files": keep_files, "delete_files": delete_files_new}, f, indent=4)
 
 def main():
     # aura = AuraManager()
@@ -114,7 +144,9 @@ def main():
     # print(f"Deleted {delete_count} files")
     # print(f"Errors deleting {error_count} files")
 
-    review_files()
+    # review_files()
+    remove_files()
+    # dedupe()
 
 
 if __name__ == "__main__":
