@@ -74,7 +74,7 @@ class AuraManager:
 
         if write_to_file:
             with open(f"{self.debug_file_path}/{frame_id}_assets.json", "w") as f:
-                json.dump(json_data, f)
+                json.dump(json_data, f, indent=4)
 
         print(f"Found {len(json_data['assets'])} assets")
 
@@ -155,6 +155,78 @@ class AuraManager:
             # })
 
         # return assets_all
+
+    def crop_asset(self, asset, fit=True, params=None):
+        # POST to https://api.pushd.com/v5/assets/crop.json
+        # example payload:
+        # id is the id field from assets array
+        # user_id is the user_id field from assets array, not sure if it's needed
+        # 4284 is the width of the image
+        # 5712 is the height of the image
+        # {
+        #     "id": "a8e3ed8c-b04d-11ef-9ab8-0affcf9d92af",
+        #     "local_identifier": null,
+        #     "user_id": "85feec8c-7d7c-11ed-a975-0e4972f5035b",
+        #     "rotation_cw": 0,
+        #     "user_landscape_16_10_rect": null,
+        #     "user_landscape_rect": "0,0,4284,5712",
+        #     "user_portrait_4_5_rect": null,
+        #     "user_portrait_rect": null
+        # }
+        print(f"Cropping {asset['id']}, fit={fit}")
+
+        url = "https://api.pushd.com/v5/assets/crop.json"
+        payload = {
+            "id": asset["id"],
+            "local_identifier": None,
+            "user_id": asset["user_id"],
+        }
+
+        if fit:
+            payload.update(
+                {
+                    "rotation_cw": 0,
+                    "user_landscape_16_10_rect": None,
+                    "user_landscape_rect": f"0,0,{asset['width']},{asset['height']}",
+                    "user_portrait_4_5_rect": None,
+                    "user_portrait_rect": None,
+                }
+            )
+        else:
+            payload.update(params)
+
+        r = self.session.post(url, json=payload)
+
+        if r.status_code != 200:
+            print(f"Crop Error: {r.text}")
+            return 0
+
+        print("Crop Success")
+
+        return json.loads(r.text)["asset"]
+
+    def fit_assets(self, frame_id):
+        assets = self.list_assets(frame_id)
+        print(f"Found {len(assets)} assets for frame {frame_id}")
+
+        counter = 0
+        for asset in assets:
+            # check for portrait and auto-crop
+            if (
+                asset["width"] < asset["height"]
+                and asset["auto_portrait_4_5_rect"] is not None
+            ):
+                print(
+                    f"Fitting {asset['id']} (width={asset['width']}, height={asset['height']}, auto_rect={asset['auto_portrait_4_5_rect']})"
+                )
+                self.crop_asset(asset, fit=True)
+                counter += 1
+            else:
+                print(
+                    f"Skipping {asset['id']} (width={asset['width']}, height={asset['height']}, auto_rect={asset['auto_portrait_4_5_rect']})"
+                )
+
+        print(f"Fitted {counter} assets")
 
     def start_batch_download(self, videos_only=False):
         for frame in self.config["frames"]:

@@ -12,14 +12,14 @@ accounts:
 # Then grab the ID from the URL: https://app.auraframes.com/frame/<FRAME ID HERE>
 frames:
   -
-    name: Masonic 1
-    frame_id: e49b1380-70dd-4e19-97b4-2b95e269a8d9
-  -
-    name: Tahoe Frame New
-    frame_id: 4cf022ba-6829-4250-b266-1d50a745da63
-  -
-    name: Florida Frame
-    frame_id: 98bcc676-9a4f-474c-aaf1-5352c8773dcb
-  -
-    name: NH Frame
-    frame_id: 3ffa9305-513c-4583-820a-f120c2f71e98
+    name: Masonic Frame
+    frame_id: 38ea899f-f713-4b45-8685-795e045cbeeb
+  # -
+  #   name: Tahoe Frame New
+  #   frame_id: 4cf022ba-6829-4250-b266-1d50a745da63
+  # -
+  #   name: Florida Frame
+  #   frame_id: 98bcc676-9a4f-474c-aaf1-5352c8773dcb
+  # -
+  #   name: NH Frame
+  #   frame_id: 3ffa9305-513c-4583-820a-f120c2f71e98

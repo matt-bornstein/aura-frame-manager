@@ -91,11 +91,8 @@ def remove_files():
     with open("debug/reviewed-files.json", "w") as f:
         json.dump({"keep_files": keep_files, "delete_files": delete_files_new}, f, indent=4)
 
-def main():
-    # aura = AuraManager()
-    # aura.start_batch_download(videos_only=True)
-    # aura.list_assets_all(True)
-
+# this is a grab bag right now, not a working function
+def prep_assets_to_review():
     # read all json files in debug folder and combine the assets arrays into one array
     # assets_all = []
     # for file in os.listdir("debug"):
@@ -143,10 +140,17 @@ def main():
 
     # print(f"Deleted {delete_count} files")
     # print(f"Errors deleting {error_count} files")
+    pass
 
+def main():
+    aura = AuraManager()
+    # aura.start_batch_download(videos_only=True)
+    # aura.list_assets_all(True)
+    # aura.list_assets(aura.config["frames"][0]["frame_id"], True)
+    aura.fit_assets(aura.config["frames"][0]["frame_id"])
+    
     # review_files()
-    remove_files()
-    # dedupe()
+    # remove_files()
 
 
 if __name__ == "__main__":
