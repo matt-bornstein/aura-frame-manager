@@ -364,10 +364,20 @@ class AuraManager:
     # =========================================================================
     # ASSET UPLOAD (LOCAL -> FRAME)
     # =========================================================================
+    #
+    # NOTE: Upload functionality is EXPERIMENTAL. The Aura API endpoints for
+    # uploading are not publicly documented. These implementations are based
+    # on common REST API patterns and may not work correctly.
+    #
+    # If uploads fail, you may need to reverse-engineer the actual API by
+    # capturing network traffic from the official Aura mobile app.
+    # =========================================================================
 
     def _get_upload_url(self, frame_id: str) -> Optional[Dict]:
         """
         Get a presigned URL for uploading an asset.
+        
+        NOTE: This endpoint is experimental and may not exist.
         
         Args:
             frame_id: The frame to upload to.
@@ -375,14 +385,25 @@ class AuraManager:
         Returns:
             Dictionary with upload URL and fields, or None on failure.
         """
-        url = f"{self.BASE_API_URL}/frames/{frame_id}/assets/upload_url.json"
-        response = self.session.get(url)
+        # Try different possible endpoint patterns
+        endpoints_to_try = [
+            f"{self.BASE_API_URL}/frames/{frame_id}/assets/upload_url.json",
+            f"{self.BASE_API_URL}/frames/{frame_id}/upload_url.json",
+            f"{self.BASE_API_URL}/assets/upload_url.json",
+        ]
         
-        if response.status_code != 200:
-            print(f"Error getting upload URL: {response.status_code}")
-            return None
-            
-        return response.json()
+        for url in endpoints_to_try:
+            response = self.session.get(url)
+            if response.status_code == 200:
+                print(f"Found upload endpoint: {url}")
+                return response.json()
+            elif response.status_code != 404:
+                print(f"Upload URL request to {url}: {response.status_code}")
+                print(f"Response: {response.text[:500]}")
+        
+        print("Error: Could not find upload URL endpoint. Upload may not be supported via API.")
+        print("Consider uploading via the Aura mobile app or web interface.")
+        return None
 
     def upload_photo(
         self,
@@ -392,6 +413,8 @@ class AuraManager:
     ) -> Optional[Dict]:
         """
         Upload a photo to a frame.
+        
+        NOTE: This is EXPERIMENTAL. The upload API is not documented and may not work.
         
         Args:
             frame_id: The frame to upload to.
@@ -415,7 +438,7 @@ class AuraManager:
             print(f"Error: {file_path} is not an image (detected: {mime_type})")
             return None
 
-        print(f"Uploading photo: {os.path.basename(file_path)}")
+        print(f"Uploading photo: {os.path.basename(file_path)} (EXPERIMENTAL)")
 
         # Get upload URL
         upload_info = self._get_upload_url(frame_id)
@@ -427,12 +450,19 @@ class AuraManager:
             upload_url = upload_info.get("url")
             upload_fields = upload_info.get("fields", {})
             
+            if not upload_url:
+                print(f"Error: No upload URL in response. Got: {upload_info}")
+                return None
+            
+            print(f"Uploading to: {upload_url}")
+            
             with open(file_path, "rb") as f:
                 files = {"file": (os.path.basename(file_path), f, mime_type)}
                 response = requests.post(upload_url, data=upload_fields, files=files)
 
             if response.status_code not in [200, 201, 204]:
                 print(f"Upload failed: {response.status_code}")
+                print(f"Response: {response.text[:500]}")
                 return None
 
             # Register the asset with the frame
@@ -448,10 +478,12 @@ class AuraManager:
             if "key" in upload_fields:
                 asset_data["asset"]["remote_path"] = upload_fields["key"]
 
+            print(f"Registering asset at: {register_url}")
             register_response = self.session.post(register_url, json=asset_data)
             
             if register_response.status_code not in [200, 201]:
                 print(f"Asset registration failed: {register_response.status_code}")
+                print(f"Response: {register_response.text[:500]}")
                 return None
 
             print(f"Successfully uploaded: {os.path.basename(file_path)}")
@@ -459,6 +491,8 @@ class AuraManager:
 
         except Exception as e:
             print(f"Upload error: {e}")
+            import traceback
+            traceback.print_exc()
             return None
 
     def upload_video(
@@ -470,8 +504,11 @@ class AuraManager:
         """
         Upload a video to a frame.
         
-        Note: Video upload may require different handling than photos,
-        including potential transcoding requirements.
+        NOTE: This is EXPERIMENTAL. Video uploads may require:
+        - Different API endpoints than photos
+        - Server-side transcoding
+        - Chunked uploads for large files
+        - Specific codec/format requirements
         
         Args:
             frame_id: The frame to upload to.
@@ -495,7 +532,12 @@ class AuraManager:
             print(f"Error: {file_path} is not a video (detected: {mime_type})")
             return None
 
-        print(f"Uploading video: {os.path.basename(file_path)}")
+        # Check file size - large videos may need chunked upload
+        file_size = os.path.getsize(file_path)
+        if file_size > 100 * 1024 * 1024:  # 100MB
+            print(f"Warning: Large video ({file_size / 1024 / 1024:.1f}MB) - upload may fail or timeout")
+
+        print(f"Uploading video: {os.path.basename(file_path)} (EXPERIMENTAL)")
 
         # Get upload URL (videos may use a different endpoint)
         upload_info = self._get_upload_url(frame_id)

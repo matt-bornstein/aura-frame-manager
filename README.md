@@ -225,6 +225,26 @@ This tool uses the undocumented Aura API (`api.pushd.com`). Key points:
 - **Authentication**: Uses email/password authentication with token-based sessions.
 - **File Storage**: Assets are stored on Aura's cloud servers, so no physical access to frames is needed.
 
+### Experimental Features
+
+**Upload functionality is EXPERIMENTAL.** The Aura upload API endpoints are not publicly documented, and the implementation is based on common REST API patterns that may not match the actual API.
+
+If uploads don't work, you have a few options:
+1. Use the official Aura mobile app or web interface to upload
+2. Reverse-engineer the actual API by capturing network traffic from the official app (using tools like Charles Proxy or mitmproxy)
+3. Contribute findings back to this project
+
+Features that are **fully working** (based on the original codebase):
+- Downloading photos and videos
+- Listing assets
+- Updating crop/fit settings
+- Deleting assets
+
+Features that are **experimental** (may not work):
+- Uploading photos
+- Uploading videos
+- Syncing between frames (uses upload internally)
+
 ## Supported File Types
 
 ### Photos
