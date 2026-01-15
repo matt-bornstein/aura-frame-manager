@@ -290,6 +290,120 @@ print(f"Total: {stats['total']}, Photos: {stats['photos']}, Videos: {stats['vide
 ### Duplicate Photos
 Multiple users can upload the same photo to a frame, resulting in duplicates when downloaded. Consider using a duplicate photo finder on your downloaded images.
 
+## REST API
+
+The Aura Frame Manager also provides a REST API built with FastAPI.
+
+### Running the API Server
+
+```bash
+# Using uvicorn directly
+uvicorn api:app --reload
+
+# Or run the api.py file
+python api.py
+
+# With custom host/port
+uvicorn api:app --host 0.0.0.0 --port 8000
+```
+
+The API will be available at `http://localhost:8000`. Interactive API documentation is available at:
+- Swagger UI: `http://localhost:8000/docs`
+- ReDoc: `http://localhost:8000/redoc`
+
+### API Endpoints
+
+#### Frames
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/frames` | List all configured frames |
+| GET | `/frames/{frame_id}/info` | Get frame details |
+| GET | `/frames/{frame_id}/stats` | Get frame statistics |
+
+#### Assets
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/frames/{frame_id}/assets` | List all assets on a frame |
+| GET | `/frames/{frame_id}/assets/{asset_id}` | Get a specific asset |
+| DELETE | `/frames/{frame_id}/assets/{asset_id}` | Delete an asset |
+
+#### Download
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/frames/{frame_id}/assets/{asset_id}/download` | Download a single asset |
+| POST | `/frames/{frame_id}/download?output_dir=/path` | Download all assets to directory |
+
+#### Upload
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/frames/{frame_id}/upload` | Upload a single file (multipart) |
+| POST | `/frames/{frame_id}/upload/batch` | Upload multiple files |
+| POST | `/frames/{frame_id}/upload/directory?directory=/path` | Upload from local directory |
+
+#### Sync
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/sync` | Sync between two specific frames |
+| POST | `/sync/all` | Sync all frames with each other |
+
+#### Metadata
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/frames/{frame_id}/assets/{asset_id}/crop` | Update crop/fit settings |
+| POST | `/frames/{frame_id}/fit` | Fit all images on frame |
+
+#### Health
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/health` | Check API health status |
+
+### API Examples
+
+#### List assets on a frame
+
+```bash
+curl http://localhost:8000/frames/YOUR_FRAME_ID/assets
+```
+
+#### Upload a photo
+
+```bash
+curl -X POST http://localhost:8000/frames/YOUR_FRAME_ID/upload \
+  -F "file=@/path/to/photo.jpg" \
+  -F "caption=My vacation photo"
+```
+
+#### Sync two frames
+
+```bash
+curl -X POST http://localhost:8000/sync \
+  -H "Content-Type: application/json" \
+  -d '{
+    "source_frame_id": "SOURCE_ID",
+    "target_frame_id": "TARGET_ID",
+    "dry_run": true
+  }'
+```
+
+#### Fit all images on a frame
+
+```bash
+curl -X POST "http://localhost:8000/frames/YOUR_FRAME_ID/fit?include_landscape=false"
+```
+
+#### Get frame statistics
+
+```bash
+curl http://localhost:8000/frames/YOUR_FRAME_ID/stats
+```
+
 ## License
 
 See LICENSE file for details.
