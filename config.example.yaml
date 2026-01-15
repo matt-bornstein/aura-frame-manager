@@ -1,0 +1,16 @@
+---
+base_file_path: images
+debug_file_path: debug
+
+accounts:
+  - email: your-email@example.com
+    password: your-password-here
+
+# You can get your frame id by going to app.auraframes.com
+# Log in there and click on "View Photos" underneath your frame
+# Then grab the ID from the URL: https://app.auraframes.com/frame/<FRAME ID HERE>
+frames:
+  - name: My Frame
+    frame_id: your-frame-id-here
+  # - name: Another Frame
+  #   frame_id: another-frame-id

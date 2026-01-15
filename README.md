@@ -37,7 +37,12 @@ A Python tool for managing photos and videos on Aura digital picture frames (aur
 
 ### Configuration
 
-Create a `config.yaml` file with your Aura credentials and frame IDs:
+1. Copy the example config file:
+   ```bash
+   cp config.example.yaml config.yaml
+   ```
+
+2. Edit `config.yaml` with your Aura credentials and frame IDs:
 
 ```yaml
 base_file_path: images      # Where downloaded files will be saved
@@ -55,6 +60,8 @@ frames:
   - name: Kitchen Frame
     frame_id: another-frame-id
 ```
+
+**Note:** `config.yaml` is in `.gitignore` to keep your credentials private.
 
 ## Usage
 
