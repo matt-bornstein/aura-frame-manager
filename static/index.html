@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aura Frame Manager</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <h1 class="logo">
+                    <svg class="logo-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="3" y="3" width="18" height="18" rx="2"/>
+                        <circle cx="8.5" cy="8.5" r="1.5"/>
+                        <path d="M21 15l-5-5L5 21"/>
+                    </svg>
+                    Aura Manager
+                </h1>
+            </div>
+            
+            <nav class="sidebar-nav">
+                <div class="nav-section">
+                    <h3 class="nav-section-title">Frames</h3>
+                    <ul class="frame-list" id="frameList">
+                        <!-- Frames will be populated here -->
+                    </ul>
+                </div>
+            </nav>
+            
+            <div class="sidebar-footer">
+                <button class="btn btn-secondary btn-full" id="syncAllBtn">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M23 4v6h-6"/>
+                        <path d="M1 20v-6h6"/>
+                        <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
+                    </svg>
+                    Sync All Frames
+                </button>
+                <div class="health-status" id="healthStatus">
+                    <span class="status-dot"></span>
+                    <span class="status-text">Checking...</span>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Header -->
+            <header class="main-header">
+                <div class="header-left">
+                    <h2 class="page-title" id="pageTitle">Select a Frame</h2>
+                    <p class="page-subtitle" id="pageSubtitle">Choose a frame from the sidebar to manage its assets</p>
+                </div>
+                <div class="header-actions" id="headerActions" style="display: none;">
+                    <button class="btn btn-secondary" id="refreshBtn">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M23 4v6h-6"/>
+                            <path d="M1 20v-6h6"/>
+                            <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
+                        </svg>
+                        Refresh
+                    </button>
+                    <button class="btn btn-secondary" id="fitAllBtn">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M15 3h6v6"/>
+                            <path d="M9 21H3v-6"/>
+                            <path d="M21 3l-7 7"/>
+                            <path d="M3 21l7-7"/>
+                        </svg>
+                        Fit All
+                    </button>
+                    <button class="btn btn-primary" id="uploadBtn">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                            <polyline points="17,8 12,3 7,8"/>
+                            <line x1="12" y1="3" x2="12" y2="15"/>
+                        </svg>
+                        Upload
+                    </button>
+                </div>
+            </header>
+
+            <!-- Stats Bar -->
+            <div class="stats-bar" id="statsBar" style="display: none;">
+                <div class="stat-card">
+                    <div class="stat-value" id="statTotal">0</div>
+                    <div class="stat-label">Total Assets</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="statPhotos">0</div>
+                    <div class="stat-label">Photos</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="statVideos">0</div>
+                    <div class="stat-label">Videos</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="statPortrait">0</div>
+                    <div class="stat-label">Portrait</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-value" id="statLandscape">0</div>
+                    <div class="stat-label">Landscape</div>
+                </div>
+            </div>
+
+            <!-- Filter Bar -->
+            <div class="filter-bar" id="filterBar" style="display: none;">
+                <div class="filter-group">
+                    <button class="filter-btn active" data-filter="all">All</button>
+                    <button class="filter-btn" data-filter="photos">Photos</button>
+                    <button class="filter-btn" data-filter="videos">Videos</button>
+                </div>
+                <div class="search-box">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="11" cy="11" r="8"/>
+                        <path d="M21 21l-4.35-4.35"/>
+                    </svg>
+                    <input type="text" id="searchInput" placeholder="Search assets...">
+                </div>
+                <div class="view-toggle">
+                    <button class="view-btn active" data-view="grid" title="Grid View">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect x="3" y="3" width="7" height="7"/>
+                            <rect x="14" y="3" width="7" height="7"/>
+                            <rect x="3" y="14" width="7" height="7"/>
+                            <rect x="14" y="14" width="7" height="7"/>
+                        </svg>
+                    </button>
+                    <button class="view-btn" data-view="list" title="List View">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="8" y1="6" x2="21" y2="6"/>
+                            <line x1="8" y1="12" x2="21" y2="12"/>
+                            <line x1="8" y1="18" x2="21" y2="18"/>
+                            <line x1="3" y1="6" x2="3.01" y2="6"/>
+                            <line x1="3" y1="12" x2="3.01" y2="12"/>
+                            <line x1="3" y1="18" x2="3.01" y2="18"/>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Content Area -->
+            <div class="content-area" id="contentArea">
+                <!-- Welcome State -->
+                <div class="empty-state" id="emptyState">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <rect x="3" y="3" width="18" height="18" rx="2"/>
+                        <circle cx="8.5" cy="8.5" r="1.5"/>
+                        <path d="M21 15l-5-5L5 21"/>
+                    </svg>
+                    <h3>Welcome to Aura Frame Manager</h3>
+                    <p>Select a frame from the sidebar to view and manage your photos and videos.</p>
+                </div>
+
+                <!-- Assets Grid -->
+                <div class="assets-grid" id="assetsGrid" style="display: none;"></div>
+
+                <!-- Assets List -->
+                <div class="assets-list" id="assetsList" style="display: none;"></div>
+
+                <!-- Loading State -->
+                <div class="loading-state" id="loadingState" style="display: none;">
+                    <div class="spinner"></div>
+                    <p>Loading assets...</p>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Upload Modal -->
+    <div class="modal" id="uploadModal">
+        <div class="modal-backdrop"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Upload Files</h3>
+                <button class="modal-close" id="closeUploadModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="upload-dropzone" id="uploadDropzone">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                        <polyline points="17,8 12,3 7,8"/>
+                        <line x1="12" y1="3" x2="12" y2="15"/>
+                    </svg>
+                    <p>Drag and drop files here</p>
+                    <span>or</span>
+                    <button class="btn btn-secondary" id="browseFilesBtn">Browse Files</button>
+                    <input type="file" id="fileInput" multiple accept="image/*,video/*" style="display: none;">
+                </div>
+                <div class="upload-preview" id="uploadPreview" style="display: none;">
+                    <div class="preview-header">
+                        <span id="uploadFileCount">0 files selected</span>
+                        <button class="btn btn-text" id="clearFilesBtn">Clear All</button>
+                    </div>
+                    <div class="preview-list" id="previewList"></div>
+                </div>
+                <div class="upload-options">
+                    <label class="input-label">Caption (optional)</label>
+                    <input type="text" class="input" id="uploadCaption" placeholder="Add a caption to your uploads">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="cancelUploadBtn">Cancel</button>
+                <button class="btn btn-primary" id="startUploadBtn" disabled>
+                    <span class="btn-text">Upload</span>
+                    <span class="btn-loading" style="display: none;">
+                        <div class="spinner-small"></div>
+                        Uploading...
+                    </span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Sync Modal -->
+    <div class="modal" id="syncModal">
+        <div class="modal-backdrop"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Sync Frames</h3>
+                <button class="modal-close" id="closeSyncModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p class="modal-description">Synchronize content between frames. Assets from the source frame will be copied to the target frame.</p>
+                
+                <div class="form-group">
+                    <label class="input-label">Source Frame</label>
+                    <select class="input" id="syncSourceFrame"></select>
+                </div>
+                
+                <div class="form-group">
+                    <label class="input-label">Target Frame</label>
+                    <select class="input" id="syncTargetFrame"></select>
+                </div>
+                
+                <div class="form-group">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="syncPhotosOnly">
+                        <span>Photos only</span>
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="syncVideosOnly">
+                        <span>Videos only</span>
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="syncDryRun">
+                        <span>Dry run (preview only)</span>
+                    </label>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="cancelSyncBtn">Cancel</button>
+                <button class="btn btn-primary" id="startSyncBtn">
+                    <span class="btn-text">Start Sync</span>
+                    <span class="btn-loading" style="display: none;">
+                        <div class="spinner-small"></div>
+                        Syncing...
+                    </span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Asset Detail Modal -->
+    <div class="modal" id="assetModal">
+        <div class="modal-backdrop"></div>
+        <div class="modal-content modal-large">
+            <div class="modal-header">
+                <h3 id="assetModalTitle">Asset Details</h3>
+                <button class="modal-close" id="closeAssetModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="asset-detail">
+                    <div class="asset-preview" id="assetPreviewContainer">
+                        <!-- Preview will be inserted here -->
+                    </div>
+                    <div class="asset-info">
+                        <div class="info-row">
+                            <span class="info-label">ID</span>
+                            <span class="info-value" id="assetDetailId">-</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">Type</span>
+                            <span class="info-value" id="assetDetailType">-</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">Filename</span>
+                            <span class="info-value" id="assetDetailFilename">-</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">Dimensions</span>
+                            <span class="info-value" id="assetDetailDimensions">-</span>
+                        </div>
+                        <div class="info-row">
+                            <span class="info-label">Taken At</span>
+                            <span class="info-value" id="assetDetailTakenAt">-</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-danger" id="deleteAssetBtn">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="3,6 5,6 21,6"/>
+                        <path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
+                    </svg>
+                    Delete
+                </button>
+                <button class="btn btn-secondary" id="fitAssetBtn">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M15 3h6v6"/>
+                        <path d="M9 21H3v-6"/>
+                        <path d="M21 3l-7 7"/>
+                        <path d="M3 21l7-7"/>
+                    </svg>
+                    Fit to Frame
+                </button>
+                <button class="btn btn-primary" id="downloadAssetBtn">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                        <polyline points="7,10 12,15 17,10"/>
+                        <line x1="12" y1="15" x2="12" y2="3"/>
+                    </svg>
+                    Download
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Container -->
+    <div class="toast-container" id="toastContainer"></div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

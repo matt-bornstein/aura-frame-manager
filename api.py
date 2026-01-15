@@ -8,6 +8,9 @@ Run with:
 
 Or:
     python api.py
+
+Access the web UI at http://localhost:8000/
+API docs available at http://localhost:8000/docs
 """
 
 import os
@@ -15,12 +18,18 @@ import tempfile
 import shutil
 from typing import Optional, List
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, UploadFile, File, Query, BackgroundTasks
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from auramanager import AuraManager, Asset
+
+# Get the directory where this file is located
+BASE_DIR = Path(__file__).resolve().parent
+STATIC_DIR = BASE_DIR / "static"
 
 
 # =============================================================================
@@ -161,6 +170,10 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+
+# Mount static files
+if STATIC_DIR.exists():
+    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 def get_aura() -> AuraManager:
@@ -557,6 +570,22 @@ async def health_check():
         "aura_initialized": aura is not None,
         "frames_configured": len(aura.config["frames"]) if aura else 0,
     }
+
+
+# =============================================================================
+# Web UI
+# =============================================================================
+
+@app.get("/", response_class=HTMLResponse, include_in_schema=False)
+async def serve_ui():
+    """Serve the web UI."""
+    index_path = STATIC_DIR / "index.html"
+    if index_path.exists():
+        return FileResponse(index_path)
+    return HTMLResponse(
+        content="<h1>Aura Frame Manager</h1><p>Web UI not found. API available at <a href='/docs'>/docs</a></p>",
+        status_code=200
+    )
 
 
 # =============================================================================

@@ -290,24 +290,43 @@ print(f"Total: {stats['total']}, Photos: {stats['photos']}, Videos: {stats['vide
 ### Duplicate Photos
 Multiple users can upload the same photo to a frame, resulting in duplicates when downloaded. Consider using a duplicate photo finder on your downloaded images.
 
-## REST API
+## Web UI
 
-The Aura Frame Manager also provides a REST API built with FastAPI.
+The Aura Frame Manager includes a modern web interface for managing your frames.
 
-### Running the API Server
+### Running the Web UI
 
 ```bash
-# Using uvicorn directly
+# Install dependencies
+uv sync  # or: pip install fastapi uvicorn python-multipart
+
+# Start the server
 uvicorn api:app --reload
-
-# Or run the api.py file
+# or
 python api.py
-
-# With custom host/port
-uvicorn api:app --host 0.0.0.0 --port 8000
 ```
 
-The API will be available at `http://localhost:8000`. Interactive API documentation is available at:
+Then open your browser to `http://localhost:8000`
+
+### Features
+
+- **Frame Selection** - Switch between multiple configured frames
+- **Asset Grid/List View** - View all photos and videos with thumbnails
+- **Search & Filter** - Filter by type (photos/videos) and search by filename
+- **Upload** - Drag-and-drop or browse to upload files
+- **Download** - Download individual assets
+- **Sync** - Synchronize content between frames
+- **Fit Images** - Remove auto-crop to show complete pictures
+- **Delete** - Remove assets from frames
+- **Real-time Stats** - View counts of photos, videos, portrait/landscape
+
+## REST API
+
+The web UI is powered by a REST API that you can also use directly.
+
+### API Documentation
+
+Interactive API documentation is available at:
 - Swagger UI: `http://localhost:8000/docs`
 - ReDoc: `http://localhost:8000/redoc`
 

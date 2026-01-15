@@ -1,0 +1,914 @@
+/**
+ * Aura Frame Manager - Frontend Application
+ */
+
+// =============================================================================
+// State Management
+// =============================================================================
+
+const state = {
+    frames: [],
+    currentFrameId: null,
+    assets: [],
+    filter: 'all',
+    view: 'grid',
+    searchQuery: '',
+    selectedFiles: [],
+    currentAsset: null,
+};
+
+// =============================================================================
+// API Client
+// =============================================================================
+
+const api = {
+    baseUrl: '',
+
+    async request(endpoint, options = {}) {
+        const url = `${this.baseUrl}${endpoint}`;
+        const response = await fetch(url, {
+            headers: {
+                'Content-Type': 'application/json',
+                ...options.headers,
+            },
+            ...options,
+        });
+
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({ detail: 'Request failed' }));
+            throw new Error(error.detail || `HTTP ${response.status}`);
+        }
+
+        // Handle empty responses
+        const text = await response.text();
+        return text ? JSON.parse(text) : null;
+    },
+
+    // Frames
+    async getFrames() {
+        return this.request('/frames');
+    },
+
+    async getFrameStats(frameId) {
+        return this.request(`/frames/${frameId}/stats`);
+    },
+
+    // Assets
+    async getAssets(frameId, options = {}) {
+        const params = new URLSearchParams();
+        if (options.photosOnly) params.set('photos_only', 'true');
+        if (options.videosOnly) params.set('videos_only', 'true');
+        const query = params.toString() ? `?${params}` : '';
+        return this.request(`/frames/${frameId}/assets${query}`);
+    },
+
+    async getAsset(frameId, assetId) {
+        return this.request(`/frames/${frameId}/assets/${assetId}`);
+    },
+
+    async deleteAsset(frameId, assetId) {
+        return this.request(`/frames/${frameId}/assets/${assetId}`, {
+            method: 'DELETE',
+        });
+    },
+
+    // Upload
+    async uploadFile(frameId, file, caption = null) {
+        const formData = new FormData();
+        formData.append('file', file);
+        
+        const params = new URLSearchParams();
+        if (caption) params.set('caption', caption);
+        const query = params.toString() ? `?${params}` : '';
+
+        const response = await fetch(`${this.baseUrl}/frames/${frameId}/upload${query}`, {
+            method: 'POST',
+            body: formData,
+        });
+
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({ detail: 'Upload failed' }));
+            throw new Error(error.detail || `HTTP ${response.status}`);
+        }
+
+        return response.json();
+    },
+
+    // Sync
+    async syncFrames(sourceFrameId, targetFrameId, options = {}) {
+        return this.request('/sync', {
+            method: 'POST',
+            body: JSON.stringify({
+                source_frame_id: sourceFrameId,
+                target_frame_id: targetFrameId,
+                photos_only: options.photosOnly || false,
+                videos_only: options.videosOnly || false,
+                dry_run: options.dryRun || false,
+            }),
+        });
+    },
+
+    async syncAllFrames(options = {}) {
+        const params = new URLSearchParams();
+        if (options.photosOnly) params.set('photos_only', 'true');
+        if (options.videosOnly) params.set('videos_only', 'true');
+        if (options.dryRun) params.set('dry_run', 'true');
+        const query = params.toString() ? `?${params}` : '';
+        return this.request(`/sync/all${query}`, { method: 'POST' });
+    },
+
+    // Metadata
+    async fitAsset(frameId, assetId) {
+        return this.request(`/frames/${frameId}/assets/${assetId}/crop`, {
+            method: 'POST',
+            body: JSON.stringify({ fit_to_frame: true }),
+        });
+    },
+
+    async fitAllAssets(frameId, includeLandscape = false) {
+        const params = new URLSearchParams();
+        params.set('include_landscape', includeLandscape.toString());
+        return this.request(`/frames/${frameId}/fit?${params}`, { method: 'POST' });
+    },
+
+    // Health
+    async getHealth() {
+        return this.request('/health');
+    },
+
+    // Download URL
+    getDownloadUrl(frameId, assetId) {
+        return `${this.baseUrl}/frames/${frameId}/assets/${assetId}/download`;
+    },
+};
+
+// =============================================================================
+// DOM Elements
+// =============================================================================
+
+const elements = {
+    // Sidebar
+    frameList: document.getElementById('frameList'),
+    syncAllBtn: document.getElementById('syncAllBtn'),
+    healthStatus: document.getElementById('healthStatus'),
+
+    // Header
+    pageTitle: document.getElementById('pageTitle'),
+    pageSubtitle: document.getElementById('pageSubtitle'),
+    headerActions: document.getElementById('headerActions'),
+    refreshBtn: document.getElementById('refreshBtn'),
+    fitAllBtn: document.getElementById('fitAllBtn'),
+    uploadBtn: document.getElementById('uploadBtn'),
+
+    // Stats
+    statsBar: document.getElementById('statsBar'),
+    statTotal: document.getElementById('statTotal'),
+    statPhotos: document.getElementById('statPhotos'),
+    statVideos: document.getElementById('statVideos'),
+    statPortrait: document.getElementById('statPortrait'),
+    statLandscape: document.getElementById('statLandscape'),
+
+    // Filter
+    filterBar: document.getElementById('filterBar'),
+    searchInput: document.getElementById('searchInput'),
+
+    // Content
+    contentArea: document.getElementById('contentArea'),
+    emptyState: document.getElementById('emptyState'),
+    assetsGrid: document.getElementById('assetsGrid'),
+    assetsList: document.getElementById('assetsList'),
+    loadingState: document.getElementById('loadingState'),
+
+    // Upload Modal
+    uploadModal: document.getElementById('uploadModal'),
+    uploadDropzone: document.getElementById('uploadDropzone'),
+    fileInput: document.getElementById('fileInput'),
+    browseFilesBtn: document.getElementById('browseFilesBtn'),
+    uploadPreview: document.getElementById('uploadPreview'),
+    uploadFileCount: document.getElementById('uploadFileCount'),
+    previewList: document.getElementById('previewList'),
+    clearFilesBtn: document.getElementById('clearFilesBtn'),
+    uploadCaption: document.getElementById('uploadCaption'),
+    closeUploadModal: document.getElementById('closeUploadModal'),
+    cancelUploadBtn: document.getElementById('cancelUploadBtn'),
+    startUploadBtn: document.getElementById('startUploadBtn'),
+
+    // Sync Modal
+    syncModal: document.getElementById('syncModal'),
+    syncSourceFrame: document.getElementById('syncSourceFrame'),
+    syncTargetFrame: document.getElementById('syncTargetFrame'),
+    syncPhotosOnly: document.getElementById('syncPhotosOnly'),
+    syncVideosOnly: document.getElementById('syncVideosOnly'),
+    syncDryRun: document.getElementById('syncDryRun'),
+    closeSyncModal: document.getElementById('closeSyncModal'),
+    cancelSyncBtn: document.getElementById('cancelSyncBtn'),
+    startSyncBtn: document.getElementById('startSyncBtn'),
+
+    // Asset Modal
+    assetModal: document.getElementById('assetModal'),
+    assetModalTitle: document.getElementById('assetModalTitle'),
+    assetPreviewContainer: document.getElementById('assetPreviewContainer'),
+    assetDetailId: document.getElementById('assetDetailId'),
+    assetDetailType: document.getElementById('assetDetailType'),
+    assetDetailFilename: document.getElementById('assetDetailFilename'),
+    assetDetailDimensions: document.getElementById('assetDetailDimensions'),
+    assetDetailTakenAt: document.getElementById('assetDetailTakenAt'),
+    closeAssetModal: document.getElementById('closeAssetModal'),
+    deleteAssetBtn: document.getElementById('deleteAssetBtn'),
+    fitAssetBtn: document.getElementById('fitAssetBtn'),
+    downloadAssetBtn: document.getElementById('downloadAssetBtn'),
+
+    // Toast
+    toastContainer: document.getElementById('toastContainer'),
+};
+
+// =============================================================================
+// Toast Notifications
+// =============================================================================
+
+function showToast(message, type = 'success') {
+    const toast = document.createElement('div');
+    toast.className = `toast ${type}`;
+    toast.innerHTML = `
+        <span class="toast-message">${message}</span>
+        <button class="toast-close">&times;</button>
+    `;
+
+    elements.toastContainer.appendChild(toast);
+
+    const closeBtn = toast.querySelector('.toast-close');
+    closeBtn.addEventListener('click', () => removeToast(toast));
+
+    setTimeout(() => removeToast(toast), 5000);
+}
+
+function removeToast(toast) {
+    toast.classList.add('removing');
+    setTimeout(() => toast.remove(), 300);
+}
+
+// =============================================================================
+// Loading States
+// =============================================================================
+
+function showLoading() {
+    elements.emptyState.style.display = 'none';
+    elements.assetsGrid.style.display = 'none';
+    elements.assetsList.style.display = 'none';
+    elements.loadingState.style.display = 'flex';
+}
+
+function hideLoading() {
+    elements.loadingState.style.display = 'none';
+}
+
+// =============================================================================
+// Frame Management
+// =============================================================================
+
+async function loadFrames() {
+    try {
+        const data = await api.getFrames();
+        state.frames = data.frames;
+        renderFrameList();
+    } catch (error) {
+        console.error('Failed to load frames:', error);
+        showToast('Failed to load frames: ' + error.message, 'error');
+    }
+}
+
+function renderFrameList() {
+    elements.frameList.innerHTML = state.frames.map(frame => `
+        <li class="frame-item">
+            <a class="frame-link ${frame.frame_id === state.currentFrameId ? 'active' : ''}" 
+               data-frame-id="${frame.frame_id}">
+                <svg class="frame-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="3" y="3" width="18" height="18" rx="2"/>
+                    <circle cx="8.5" cy="8.5" r="1.5"/>
+                    <path d="M21 15l-5-5L5 21"/>
+                </svg>
+                <span class="frame-name">${frame.name}</span>
+            </a>
+        </li>
+    `).join('');
+
+    // Add click handlers
+    elements.frameList.querySelectorAll('.frame-link').forEach(link => {
+        link.addEventListener('click', () => {
+            const frameId = link.dataset.frameId;
+            selectFrame(frameId);
+        });
+    });
+}
+
+async function selectFrame(frameId) {
+    state.currentFrameId = frameId;
+    const frame = state.frames.find(f => f.frame_id === frameId);
+
+    // Update UI
+    elements.pageTitle.textContent = frame ? frame.name : 'Frame';
+    elements.pageSubtitle.textContent = 'Loading assets...';
+    elements.headerActions.style.display = 'flex';
+    elements.statsBar.style.display = 'flex';
+    elements.filterBar.style.display = 'flex';
+
+    // Update sidebar active state
+    renderFrameList();
+
+    // Load assets
+    await loadAssets();
+    await loadStats();
+}
+
+async function loadStats() {
+    if (!state.currentFrameId) return;
+
+    try {
+        const stats = await api.getFrameStats(state.currentFrameId);
+        elements.statTotal.textContent = stats.total;
+        elements.statPhotos.textContent = stats.photos;
+        elements.statVideos.textContent = stats.videos;
+        elements.statPortrait.textContent = stats.portrait;
+        elements.statLandscape.textContent = stats.landscape;
+    } catch (error) {
+        console.error('Failed to load stats:', error);
+    }
+}
+
+// =============================================================================
+// Asset Management
+// =============================================================================
+
+async function loadAssets() {
+    if (!state.currentFrameId) return;
+
+    showLoading();
+
+    try {
+        const data = await api.getAssets(state.currentFrameId);
+        state.assets = data.assets;
+        elements.pageSubtitle.textContent = `${state.assets.length} assets`;
+        renderAssets();
+    } catch (error) {
+        console.error('Failed to load assets:', error);
+        showToast('Failed to load assets: ' + error.message, 'error');
+        elements.emptyState.style.display = 'flex';
+    } finally {
+        hideLoading();
+    }
+}
+
+function getFilteredAssets() {
+    let filtered = state.assets;
+
+    // Apply type filter
+    if (state.filter === 'photos') {
+        filtered = filtered.filter(a => !a.is_video);
+    } else if (state.filter === 'videos') {
+        filtered = filtered.filter(a => a.is_video);
+    }
+
+    // Apply search
+    if (state.searchQuery) {
+        const query = state.searchQuery.toLowerCase();
+        filtered = filtered.filter(a => 
+            a.file_name.toLowerCase().includes(query) ||
+            a.id.toLowerCase().includes(query)
+        );
+    }
+
+    return filtered;
+}
+
+function renderAssets() {
+    const filtered = getFilteredAssets();
+
+    if (filtered.length === 0) {
+        elements.emptyState.style.display = 'flex';
+        elements.assetsGrid.style.display = 'none';
+        elements.assetsList.style.display = 'none';
+        elements.emptyState.querySelector('h3').textContent = 'No assets found';
+        elements.emptyState.querySelector('p').textContent = 
+            state.searchQuery ? 'Try adjusting your search.' : 'Upload some photos or videos to get started.';
+        return;
+    }
+
+    elements.emptyState.style.display = 'none';
+
+    if (state.view === 'grid') {
+        renderGridView(filtered);
+    } else {
+        renderListView(filtered);
+    }
+}
+
+function renderGridView(assets) {
+    elements.assetsList.style.display = 'none';
+    elements.assetsGrid.style.display = 'grid';
+
+    elements.assetsGrid.innerHTML = assets.map(asset => `
+        <div class="asset-card" data-asset-id="${asset.id}">
+            <div class="asset-thumbnail">
+                ${asset.is_video ? `
+                    <div class="asset-type-badge">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <polygon points="5,3 19,12 5,21"/>
+                        </svg>
+                        Video
+                    </div>
+                ` : ''}
+                <img src="${api.getDownloadUrl(state.currentFrameId, asset.id)}" 
+                     alt="${asset.file_name}"
+                     loading="lazy"
+                     onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22%23cbd5e1%22><rect width=%2224%22 height=%2224%22/><text x=%2212%22 y=%2214%22 text-anchor=%22middle%22 font-size=%228%22 fill=%22%2394a3b8%22>?</text></svg>'">
+            </div>
+            <div class="asset-card-info">
+                <div class="asset-card-name">${asset.file_name}</div>
+                <div class="asset-card-meta">${asset.width} x ${asset.height}</div>
+            </div>
+        </div>
+    `).join('');
+
+    // Add click handlers
+    elements.assetsGrid.querySelectorAll('.asset-card').forEach(card => {
+        card.addEventListener('click', () => {
+            const assetId = card.dataset.assetId;
+            openAssetModal(assetId);
+        });
+    });
+}
+
+function renderListView(assets) {
+    elements.assetsGrid.style.display = 'none';
+    elements.assetsList.style.display = 'block';
+
+    elements.assetsList.innerHTML = assets.map(asset => `
+        <div class="asset-row" data-asset-id="${asset.id}">
+            <div class="asset-row-thumbnail">
+                <img src="${api.getDownloadUrl(state.currentFrameId, asset.id)}" 
+                     alt="${asset.file_name}"
+                     loading="lazy"
+                     onerror="this.style.display='none'">
+            </div>
+            <div class="asset-row-info">
+                <div class="asset-row-name">${asset.file_name}</div>
+                <div class="asset-row-meta">${asset.width} x ${asset.height} ${asset.taken_at ? ' • ' + formatDate(asset.taken_at) : ''}</div>
+            </div>
+            <span class="asset-row-type ${asset.is_video ? 'video' : ''}">${asset.is_video ? 'Video' : 'Photo'}</span>
+        </div>
+    `).join('');
+
+    // Add click handlers
+    elements.assetsList.querySelectorAll('.asset-row').forEach(row => {
+        row.addEventListener('click', () => {
+            const assetId = row.dataset.assetId;
+            openAssetModal(assetId);
+        });
+    });
+}
+
+function formatDate(dateString) {
+    if (!dateString) return '-';
+    try {
+        return new Date(dateString).toLocaleDateString();
+    } catch {
+        return dateString;
+    }
+}
+
+// =============================================================================
+// Asset Modal
+// =============================================================================
+
+function openAssetModal(assetId) {
+    const asset = state.assets.find(a => a.id === assetId);
+    if (!asset) return;
+
+    state.currentAsset = asset;
+
+    // Update modal content
+    elements.assetModalTitle.textContent = asset.is_video ? 'Video Details' : 'Photo Details';
+    elements.assetDetailId.textContent = asset.id;
+    elements.assetDetailType.textContent = asset.is_video ? 'Video' : 'Photo';
+    elements.assetDetailFilename.textContent = asset.file_name;
+    elements.assetDetailDimensions.textContent = `${asset.width} x ${asset.height}`;
+    elements.assetDetailTakenAt.textContent = formatDate(asset.taken_at);
+
+    // Show preview
+    if (asset.is_video) {
+        elements.assetPreviewContainer.innerHTML = `
+            <video controls style="max-width:100%;max-height:100%;">
+                <source src="${api.getDownloadUrl(state.currentFrameId, asset.id)}" type="video/mp4">
+            </video>
+        `;
+    } else {
+        elements.assetPreviewContainer.innerHTML = `
+            <img src="${api.getDownloadUrl(state.currentFrameId, asset.id)}" alt="${asset.file_name}">
+        `;
+    }
+
+    elements.assetModal.classList.add('open');
+}
+
+function closeAssetModal() {
+    elements.assetModal.classList.remove('open');
+    state.currentAsset = null;
+}
+
+async function deleteCurrentAsset() {
+    if (!state.currentAsset || !state.currentFrameId) return;
+
+    if (!confirm(`Are you sure you want to delete "${state.currentAsset.file_name}"?`)) {
+        return;
+    }
+
+    try {
+        await api.deleteAsset(state.currentFrameId, state.currentAsset.id);
+        showToast('Asset deleted successfully');
+        closeAssetModal();
+        await loadAssets();
+        await loadStats();
+    } catch (error) {
+        console.error('Failed to delete asset:', error);
+        showToast('Failed to delete asset: ' + error.message, 'error');
+    }
+}
+
+async function fitCurrentAsset() {
+    if (!state.currentAsset || !state.currentFrameId) return;
+
+    try {
+        await api.fitAsset(state.currentFrameId, state.currentAsset.id);
+        showToast('Asset fitted successfully');
+    } catch (error) {
+        console.error('Failed to fit asset:', error);
+        showToast('Failed to fit asset: ' + error.message, 'error');
+    }
+}
+
+function downloadCurrentAsset() {
+    if (!state.currentAsset || !state.currentFrameId) return;
+
+    const url = api.getDownloadUrl(state.currentFrameId, state.currentAsset.id);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = state.currentAsset.file_name;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+}
+
+// =============================================================================
+// Upload Modal
+// =============================================================================
+
+function openUploadModal() {
+    if (!state.currentFrameId) {
+        showToast('Please select a frame first', 'warning');
+        return;
+    }
+    state.selectedFiles = [];
+    updateUploadPreview();
+    elements.uploadCaption.value = '';
+    elements.uploadModal.classList.add('open');
+}
+
+function closeUploadModal() {
+    elements.uploadModal.classList.remove('open');
+    state.selectedFiles = [];
+}
+
+function handleFileSelect(files) {
+    const validTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/heic',
+                        'video/mp4', 'video/quicktime', 'video/x-msvideo', 'video/webm'];
+    
+    for (const file of files) {
+        if (validTypes.some(type => file.type.startsWith(type.split('/')[0]))) {
+            state.selectedFiles.push(file);
+        }
+    }
+    
+    updateUploadPreview();
+}
+
+function updateUploadPreview() {
+    if (state.selectedFiles.length === 0) {
+        elements.uploadDropzone.style.display = 'block';
+        elements.uploadPreview.style.display = 'none';
+        elements.startUploadBtn.disabled = true;
+        return;
+    }
+
+    elements.uploadDropzone.style.display = 'none';
+    elements.uploadPreview.style.display = 'block';
+    elements.startUploadBtn.disabled = false;
+    elements.uploadFileCount.textContent = `${state.selectedFiles.length} file${state.selectedFiles.length > 1 ? 's' : ''} selected`;
+
+    elements.previewList.innerHTML = state.selectedFiles.map((file, index) => `
+        <div class="preview-item" data-index="${index}">
+            <div class="preview-item-thumb">
+                ${file.type.startsWith('image/') ? 
+                    `<img src="${URL.createObjectURL(file)}" alt="${file.name}">` : 
+                    ''}
+            </div>
+            <div class="preview-item-info">
+                <div class="preview-item-name">${file.name}</div>
+                <div class="preview-item-size">${formatFileSize(file.size)}</div>
+            </div>
+            <button class="preview-item-remove" data-index="${index}">&times;</button>
+        </div>
+    `).join('');
+
+    // Add remove handlers
+    elements.previewList.querySelectorAll('.preview-item-remove').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const index = parseInt(btn.dataset.index);
+            state.selectedFiles.splice(index, 1);
+            updateUploadPreview();
+        });
+    });
+}
+
+function formatFileSize(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+async function startUpload() {
+    if (state.selectedFiles.length === 0 || !state.currentFrameId) return;
+
+    const btnText = elements.startUploadBtn.querySelector('.btn-text');
+    const btnLoading = elements.startUploadBtn.querySelector('.btn-loading');
+    
+    btnText.style.display = 'none';
+    btnLoading.style.display = 'flex';
+    elements.startUploadBtn.disabled = true;
+    elements.cancelUploadBtn.disabled = true;
+
+    const caption = elements.uploadCaption.value || null;
+    let uploaded = 0;
+    let failed = 0;
+
+    for (const file of state.selectedFiles) {
+        try {
+            await api.uploadFile(state.currentFrameId, file, caption);
+            uploaded++;
+        } catch (error) {
+            console.error(`Failed to upload ${file.name}:`, error);
+            failed++;
+        }
+    }
+
+    btnText.style.display = 'inline';
+    btnLoading.style.display = 'none';
+    elements.startUploadBtn.disabled = false;
+    elements.cancelUploadBtn.disabled = false;
+
+    if (failed === 0) {
+        showToast(`Successfully uploaded ${uploaded} file${uploaded > 1 ? 's' : ''}`);
+    } else {
+        showToast(`Uploaded ${uploaded}, failed ${failed}`, failed > 0 ? 'warning' : 'success');
+    }
+
+    closeUploadModal();
+    await loadAssets();
+    await loadStats();
+}
+
+// =============================================================================
+// Sync Modal
+// =============================================================================
+
+function openSyncModal() {
+    // Populate frame selects
+    const options = state.frames.map(f => 
+        `<option value="${f.frame_id}">${f.name}</option>`
+    ).join('');
+    
+    elements.syncSourceFrame.innerHTML = options;
+    elements.syncTargetFrame.innerHTML = options;
+    
+    // Reset checkboxes
+    elements.syncPhotosOnly.checked = false;
+    elements.syncVideosOnly.checked = false;
+    elements.syncDryRun.checked = false;
+
+    elements.syncModal.classList.add('open');
+}
+
+function closeSyncModal() {
+    elements.syncModal.classList.remove('open');
+}
+
+async function startSync() {
+    const sourceId = elements.syncSourceFrame.value;
+    const targetId = elements.syncTargetFrame.value;
+
+    if (sourceId === targetId) {
+        showToast('Source and target frames must be different', 'warning');
+        return;
+    }
+
+    const btnText = elements.startSyncBtn.querySelector('.btn-text');
+    const btnLoading = elements.startSyncBtn.querySelector('.btn-loading');
+    
+    btnText.style.display = 'none';
+    btnLoading.style.display = 'flex';
+    elements.startSyncBtn.disabled = true;
+
+    try {
+        const result = await api.syncFrames(sourceId, targetId, {
+            photosOnly: elements.syncPhotosOnly.checked,
+            videosOnly: elements.syncVideosOnly.checked,
+            dryRun: elements.syncDryRun.checked,
+        });
+
+        showToast(result.message);
+        closeSyncModal();
+        
+        if (!elements.syncDryRun.checked && state.currentFrameId === targetId) {
+            await loadAssets();
+            await loadStats();
+        }
+    } catch (error) {
+        console.error('Sync failed:', error);
+        showToast('Sync failed: ' + error.message, 'error');
+    } finally {
+        btnText.style.display = 'inline';
+        btnLoading.style.display = 'none';
+        elements.startSyncBtn.disabled = false;
+    }
+}
+
+async function syncAllFrames() {
+    if (!confirm('This will sync all frames with each other. Continue?')) {
+        return;
+    }
+
+    try {
+        showToast('Starting sync of all frames...', 'success');
+        const result = await api.syncAllFrames();
+        showToast(result.message);
+        
+        if (state.currentFrameId) {
+            await loadAssets();
+            await loadStats();
+        }
+    } catch (error) {
+        console.error('Sync all failed:', error);
+        showToast('Sync failed: ' + error.message, 'error');
+    }
+}
+
+// =============================================================================
+// Health Check
+// =============================================================================
+
+async function checkHealth() {
+    const statusDot = elements.healthStatus.querySelector('.status-dot');
+    const statusText = elements.healthStatus.querySelector('.status-text');
+
+    try {
+        const health = await api.getHealth();
+        statusDot.className = 'status-dot ' + (health.aura_initialized ? 'healthy' : 'error');
+        statusText.textContent = health.aura_initialized ? 
+            `Connected (${health.frames_configured} frames)` : 
+            'Not initialized';
+    } catch (error) {
+        statusDot.className = 'status-dot error';
+        statusText.textContent = 'Disconnected';
+    }
+}
+
+// =============================================================================
+// Fit All
+// =============================================================================
+
+async function fitAllAssets() {
+    if (!state.currentFrameId) return;
+
+    if (!confirm('This will fit all portrait images on this frame to show the complete picture. Continue?')) {
+        return;
+    }
+
+    try {
+        const result = await api.fitAllAssets(state.currentFrameId);
+        showToast(result.message);
+    } catch (error) {
+        console.error('Fit all failed:', error);
+        showToast('Failed to fit assets: ' + error.message, 'error');
+    }
+}
+
+// =============================================================================
+// Event Listeners
+// =============================================================================
+
+function initEventListeners() {
+    // Header actions
+    elements.refreshBtn.addEventListener('click', async () => {
+        await loadAssets();
+        await loadStats();
+        showToast('Refreshed');
+    });
+
+    elements.fitAllBtn.addEventListener('click', fitAllAssets);
+    elements.uploadBtn.addEventListener('click', openUploadModal);
+    elements.syncAllBtn.addEventListener('click', openSyncModal);
+
+    // Filter buttons
+    document.querySelectorAll('.filter-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            state.filter = btn.dataset.filter;
+            renderAssets();
+        });
+    });
+
+    // View toggle
+    document.querySelectorAll('.view-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.view-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            state.view = btn.dataset.view;
+            renderAssets();
+        });
+    });
+
+    // Search
+    elements.searchInput.addEventListener('input', (e) => {
+        state.searchQuery = e.target.value;
+        renderAssets();
+    });
+
+    // Upload modal
+    elements.closeUploadModal.addEventListener('click', closeUploadModal);
+    elements.cancelUploadBtn.addEventListener('click', closeUploadModal);
+    elements.browseFilesBtn.addEventListener('click', () => elements.fileInput.click());
+    elements.fileInput.addEventListener('change', (e) => handleFileSelect(e.target.files));
+    elements.clearFilesBtn.addEventListener('click', () => {
+        state.selectedFiles = [];
+        updateUploadPreview();
+    });
+    elements.startUploadBtn.addEventListener('click', startUpload);
+
+    // Drag and drop
+    elements.uploadDropzone.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        elements.uploadDropzone.classList.add('dragover');
+    });
+    elements.uploadDropzone.addEventListener('dragleave', () => {
+        elements.uploadDropzone.classList.remove('dragover');
+    });
+    elements.uploadDropzone.addEventListener('drop', (e) => {
+        e.preventDefault();
+        elements.uploadDropzone.classList.remove('dragover');
+        handleFileSelect(e.dataTransfer.files);
+    });
+
+    // Sync modal
+    elements.closeSyncModal.addEventListener('click', closeSyncModal);
+    elements.cancelSyncBtn.addEventListener('click', closeSyncModal);
+    elements.startSyncBtn.addEventListener('click', startSync);
+
+    // Asset modal
+    elements.closeAssetModal.addEventListener('click', closeAssetModal);
+    elements.deleteAssetBtn.addEventListener('click', deleteCurrentAsset);
+    elements.fitAssetBtn.addEventListener('click', fitCurrentAsset);
+    elements.downloadAssetBtn.addEventListener('click', downloadCurrentAsset);
+
+    // Modal backdrop clicks
+    document.querySelectorAll('.modal-backdrop').forEach(backdrop => {
+        backdrop.addEventListener('click', () => {
+            backdrop.closest('.modal').classList.remove('open');
+        });
+    });
+
+    // Escape key to close modals
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+            document.querySelectorAll('.modal.open').forEach(modal => {
+                modal.classList.remove('open');
+            });
+        }
+    });
+}
+
+// =============================================================================
+// Initialization
+// =============================================================================
+
+async function init() {
+    initEventListeners();
+    await checkHealth();
+    await loadFrames();
+    
+    // Check health periodically
+    setInterval(checkHealth, 30000);
+}
+
+// Start the app
+init();
