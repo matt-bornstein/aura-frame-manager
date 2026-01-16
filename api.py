@@ -305,29 +305,35 @@ async def download_asset(
                 media_type="image/jpeg"
             )
     
-    # 2. Check full-size image cache (no API call needed)
+    # 2. Check full-size asset cache (no API call needed)
     cached_file = manager.get_cached_asset_path(frame_id, asset_id)
     
     if cached_file and os.path.isfile(cached_file):
-        # If thumbnail requested but not cached, generate from cached full image
+        # If thumbnail requested but not cached, generate from cached full asset
         if thumbnail:
             ext = os.path.splitext(cached_file)[1].lower()
-            cached_is_video = ext in [".mp4", ".mov", ".avi", ".mkv", ".webm"]
-            if not cached_is_video:
-                thumb_dir = manager.get_thumbnail_dir(frame_id)
-                thumb_path = os.path.join(thumb_dir, f"{asset_id}.jpg")
+            cached_is_video = ext in [".mp4", ".mov", ".avi", ".mkv", ".webm", ".url"]
+            thumb_dir = manager.get_thumbnail_dir(frame_id)
+            thumb_path = os.path.join(thumb_dir, f"{asset_id}.jpg")
+            
+            if cached_is_video:
+                generated = manager.generate_video_thumbnail(cached_file, thumb_path)
+            else:
                 generated = manager.generate_thumbnail(cached_file, thumb_path)
-                if generated:
-                    return FileResponse(
-                        path=generated,
-                        filename=f"{asset_id}_thumb.jpg",
-                        media_type="image/jpeg"
-                    )
+            
+            if generated:
+                return FileResponse(
+                    path=generated,
+                    filename=f"{asset_id}_thumb.jpg",
+                    media_type="image/jpeg"
+                )
+            # Thumbnail generation failed - return error instead of full file
+            raise HTTPException(status_code=500, detail="Failed to generate thumbnail")
         
-        # Serve full-size from cache
+        # Serve full-size from cache (only when thumbnail not requested)
         filename = os.path.basename(cached_file)
         ext = os.path.splitext(filename)[1].lower()
-        media_type = "video/mp4" if ext in [".mp4", ".mov", ".avi", ".mkv", ".webm"] else "image/jpeg"
+        media_type = "video/mp4" if ext in [".mp4", ".mov", ".avi", ".mkv", ".webm", ".url"] else "image/jpeg"
         return FileResponse(path=cached_file, filename=filename, media_type=media_type)
     
     # 3. Not in any cache - need asset info to download from Aura
@@ -357,19 +363,24 @@ async def download_asset(
         if file_path is None:
             raise HTTPException(status_code=500, detail="Failed to download asset")
         
-        # If thumbnail requested for an image, generate it
-        if thumbnail and not asset.is_video:
+        # If thumbnail requested, generate it (works for both images and videos)
+        if thumbnail:
             thumb_dir = manager.get_thumbnail_dir(frame_id)
             thumb_path = os.path.join(thumb_dir, f"{asset_id}.jpg")
-            generated = manager.generate_thumbnail(file_path, thumb_path)
+            if asset.is_video:
+                generated = manager.generate_video_thumbnail(file_path, thumb_path)
+            else:
+                generated = manager.generate_thumbnail(file_path, thumb_path)
             if generated:
                 return FileResponse(
                     path=generated,
                     filename=f"{asset_id}_thumb.jpg",
                     media_type="image/jpeg"
                 )
+            # Thumbnail generation failed - return error instead of full file
+            raise HTTPException(status_code=500, detail="Failed to generate thumbnail")
         
-        # Return full file response (file stays in cache)
+        # Return full file response (file stays in cache, only when thumbnail not requested)
         filename = os.path.basename(file_path)
         media_type = "video/mp4" if asset.is_video else "image/jpeg"
         

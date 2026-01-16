@@ -540,7 +540,7 @@ function openAssetModal(assetId) {
     elements.assetModalTitle.textContent = asset.is_video ? 'Video Details' : 'Photo Details';
     elements.assetDetailId.textContent = asset.id;
     elements.assetDetailType.textContent = asset.is_video ? 'Video' : 'Photo';
-    elements.assetDetailFilename.textContent = asset.file_name;
+    elements.assetDetailFilename.textContent = asset.is_video ? asset.video_file_name : asset.file_name;
     elements.assetDetailDimensions.textContent = `${asset.width} x ${asset.height}`;
     elements.assetDetailTakenAt.textContent = formatDate(asset.taken_at);
 

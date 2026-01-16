@@ -16,6 +16,7 @@ import mimetypes
 from typing import Optional, List, Dict, Any, Tuple
 from dataclasses import dataclass
 from PIL import Image
+import cv2
 
 
 @dataclass
@@ -1074,6 +1075,49 @@ class AuraManager:
             print(f"Error generating thumbnail: {e}")
             return None
 
+    def generate_video_thumbnail(self, source_path: str, thumb_path: str) -> Optional[str]:
+        """
+        Generate a thumbnail from the first frame of a video.
+        
+        Args:
+            source_path: Path to the video file.
+            thumb_path: Path where thumbnail should be saved.
+            
+        Returns:
+            Path to generated thumbnail, or None on failure.
+        """
+        try:
+            # Open video and grab the first frame
+            cap = cv2.VideoCapture(source_path)
+            if not cap.isOpened():
+                print(f"Error: Could not open video {source_path}")
+                return None
+            
+            ret, frame = cap.read()
+            cap.release()
+            
+            if not ret or frame is None:
+                print(f"Error: Could not read first frame from {source_path}")
+                return None
+            
+            # Convert BGR (OpenCV) to RGB (PIL)
+            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            img = Image.fromarray(frame_rgb)
+            
+            # Calculate thumbnail size maintaining aspect ratio
+            img.thumbnail((self.THUMBNAIL_MAX_SIZE, self.THUMBNAIL_MAX_SIZE), Image.Resampling.LANCZOS)
+            
+            # Ensure directory exists
+            os.makedirs(os.path.dirname(thumb_path), exist_ok=True)
+            
+            # Save as JPEG for smaller file size
+            img.save(thumb_path, "JPEG", quality=85, optimize=True)
+            
+            return thumb_path
+        except Exception as e:
+            print(f"Error generating video thumbnail: {e}")
+            return None
+
     def get_cached_asset_path(self, frame_id: str, asset_id: str) -> Optional[str]:
         """
         Get the path to a cached full-size asset if it exists.
@@ -1099,12 +1143,14 @@ class AuraManager:
 
     def get_or_create_thumbnail(self, frame_id: str, asset: Asset) -> Optional[str]:
         """
-        Get or create a thumbnail for an asset.
+        Get or create a thumbnail for an asset (image or video).
         
         Logic:
         1. Check for thumbnail in cache - return if exists
-        2. Check for full image in cache - generate thumbnail if exists
-        3. Download full image from Aura, cache it, generate thumbnail
+        2. Check for full asset in cache - generate thumbnail if exists
+        3. Download full asset from Aura, cache it, generate thumbnail
+        
+        For videos, extracts the first frame as thumbnail.
         
         Args:
             frame_id: The frame ID.
@@ -1113,16 +1159,12 @@ class AuraManager:
         Returns:
             Path to thumbnail, or None on failure.
         """
-        # Videos don't get thumbnails (yet) - return None
-        if asset.is_video:
-            return None
-        
         # 1. Check for existing thumbnail
         thumb_path = self.get_thumbnail_path(frame_id, asset.id)
         if thumb_path:
             return thumb_path
         
-        # 2. Check for cached full-size image
+        # 2. Check for cached full-size asset
         full_path = self.get_cached_asset_path(frame_id, asset.id)
         
         # 3. If no cached full-size, download it
@@ -1133,8 +1175,11 @@ class AuraManager:
             if not full_path:
                 return None
         
-        # 4. Generate thumbnail from full-size image
+        # 4. Generate thumbnail from full-size asset
         thumb_dir = self.get_thumbnail_dir(frame_id)
         thumb_path = os.path.join(thumb_dir, f"{asset.id}.jpg")
         
-        return self.generate_thumbnail(full_path, thumb_path)
+        if asset.is_video:
+            return self.generate_video_thumbnail(full_path, thumb_path)
+        else:
+            return self.generate_thumbnail(full_path, thumb_path)
