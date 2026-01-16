@@ -137,13 +137,41 @@ const api = {
     },
 
     // Download URL (full size)
-    getDownloadUrl(frameId, assetId) {
-        return `${this.baseUrl}/frames/${frameId}/assets/${assetId}/download`;
+    // Pass asset object to include metadata and avoid extra API calls on cache miss
+    getDownloadUrl(frameId, asset) {
+        const assetId = typeof asset === 'string' ? asset : asset.id;
+        const params = new URLSearchParams();
+        
+        // If full asset object provided, include metadata to avoid backend API lookup
+        if (typeof asset === 'object') {
+            params.set('is_video', asset.is_video);
+            params.set('user_id', asset.user_id);
+            params.set('file_name', asset.file_name);
+            if (asset.video_file_name) params.set('video_file_name', asset.video_file_name);
+            if (asset.video_url) params.set('video_url', asset.video_url);
+        }
+        
+        const query = params.toString() ? `?${params}` : '';
+        return `${this.baseUrl}/frames/${frameId}/assets/${assetId}/download${query}`;
     },
 
     // Thumbnail URL (for grid/list views)
-    getThumbnailUrl(frameId, assetId) {
-        return `${this.baseUrl}/frames/${frameId}/assets/${assetId}/download?thumbnail=true`;
+    // Pass asset object to include metadata and avoid extra API calls on cache miss
+    getThumbnailUrl(frameId, asset) {
+        const assetId = typeof asset === 'string' ? asset : asset.id;
+        const params = new URLSearchParams();
+        params.set('thumbnail', 'true');
+        
+        // If full asset object provided, include metadata to avoid backend API lookup
+        if (typeof asset === 'object') {
+            params.set('is_video', asset.is_video);
+            params.set('user_id', asset.user_id);
+            params.set('file_name', asset.file_name);
+            if (asset.video_file_name) params.set('video_file_name', asset.video_file_name);
+            if (asset.video_url) params.set('video_url', asset.video_url);
+        }
+        
+        return `${this.baseUrl}/frames/${frameId}/assets/${assetId}/download?${params}`;
     },
 
     // Download All URL (returns zip file)
@@ -433,7 +461,7 @@ function renderGridView(assets) {
                         Video
                     </div>
                 ` : ''}
-                <img src="${api.getThumbnailUrl(state.currentFrameId, asset.id)}" 
+                <img src="${api.getThumbnailUrl(state.currentFrameId, asset)}" 
                      alt="${asset.file_name}"
                      loading="lazy"
                      onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22%23cbd5e1%22><rect width=%2224%22 height=%2224%22/><text x=%2212%22 y=%2214%22 text-anchor=%22middle%22 font-size=%228%22 fill=%22%2394a3b8%22>?</text></svg>'">
@@ -461,7 +489,7 @@ function renderListView(assets) {
     elements.assetsList.innerHTML = assets.map(asset => `
         <div class="asset-row" data-asset-id="${asset.id}">
             <div class="asset-row-thumbnail">
-                <img src="${api.getThumbnailUrl(state.currentFrameId, asset.id)}" 
+                <img src="${api.getThumbnailUrl(state.currentFrameId, asset)}" 
                      alt="${asset.file_name}"
                      loading="lazy"
                      onerror="this.style.display='none'">
@@ -514,12 +542,12 @@ function openAssetModal(assetId) {
     if (asset.is_video) {
         elements.assetPreviewContainer.innerHTML = `
             <video controls style="max-width:100%;max-height:100%;">
-                <source src="${api.getDownloadUrl(state.currentFrameId, asset.id)}" type="video/mp4">
+                <source src="${api.getDownloadUrl(state.currentFrameId, asset)}" type="video/mp4">
             </video>
         `;
     } else {
         elements.assetPreviewContainer.innerHTML = `
-            <img src="${api.getDownloadUrl(state.currentFrameId, asset.id)}" alt="${asset.file_name}">
+            <img src="${api.getDownloadUrl(state.currentFrameId, asset)}" alt="${asset.file_name}">
         `;
     }
 
@@ -565,7 +593,7 @@ async function fitCurrentAsset() {
 function downloadCurrentAsset() {
     if (!state.currentAsset || !state.currentFrameId) return;
 
-    const url = api.getDownloadUrl(state.currentFrameId, state.currentAsset.id);
+    const url = api.getDownloadUrl(state.currentFrameId, state.currentAsset);
     const a = document.createElement('a');
     a.href = url;
     a.download = state.currentAsset.file_name;

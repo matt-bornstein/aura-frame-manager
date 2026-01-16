@@ -47,6 +47,7 @@ class AssetResponse(BaseModel):
     height: int
     is_video: bool
     video_file_name: Optional[str] = None
+    video_url: Optional[str] = None
     taken_at: Optional[str] = None
 
     @classmethod
@@ -59,6 +60,7 @@ class AssetResponse(BaseModel):
             height=asset.height,
             is_video=asset.is_video,
             video_file_name=asset.video_file_name,
+            video_url=asset.video_url,
             taken_at=asset.taken_at,
         )
 
@@ -279,8 +281,18 @@ async def download_asset(
     frame_id: str,
     asset_id: str,
     thumbnail: bool = Query(False, description="Return thumbnail instead of full image"),
+    # Optional metadata params - if provided, avoids needing to call list_assets
+    is_video: Optional[bool] = Query(None, description="Whether asset is a video"),
+    user_id: Optional[str] = Query(None, description="User ID for constructing image URL"),
+    file_name: Optional[str] = Query(None, description="File name for images"),
+    video_file_name: Optional[str] = Query(None, description="File name for videos"),
+    video_url: Optional[str] = Query(None, description="Video URL for videos"),
 ):
-    """Download a specific asset. Serves from cache if available. Use thumbnail=true for grid views."""
+    """Download a specific asset. Serves from cache if available. Use thumbnail=true for grid views.
+    
+    Pass is_video, user_id, file_name (and video_file_name/video_url for videos) to avoid an extra 
+    API call when the asset isn't cached. These values come from the /assets listing endpoint.
+    """
     manager = get_aura()
     
     # 1. If requesting thumbnail, check thumbnail cache first (no API call needed)
@@ -300,8 +312,8 @@ async def download_asset(
         # If thumbnail requested but not cached, generate from cached full image
         if thumbnail:
             ext = os.path.splitext(cached_file)[1].lower()
-            is_video = ext in [".mp4", ".mov", ".avi", ".mkv", ".webm"]
-            if not is_video:
+            cached_is_video = ext in [".mp4", ".mov", ".avi", ".mkv", ".webm"]
+            if not cached_is_video:
                 thumb_dir = manager.get_thumbnail_dir(frame_id)
                 thumb_path = os.path.join(thumb_dir, f"{asset_id}.jpg")
                 generated = manager.generate_thumbnail(cached_file, thumb_path)
@@ -318,10 +330,24 @@ async def download_asset(
         media_type = "video/mp4" if ext in [".mp4", ".mov", ".avi", ".mkv", ".webm"] else "image/jpeg"
         return FileResponse(path=cached_file, filename=filename, media_type=media_type)
     
-    # 3. Not in any cache - need to fetch asset info from API and download
-    asset = manager.get_asset_by_id(frame_id, asset_id)
-    if asset is None:
-        raise HTTPException(status_code=404, detail=f"Asset {asset_id} not found")
+    # 3. Not in any cache - need asset info to download from Aura
+    # Use provided metadata if available, otherwise fall back to API lookup
+    if is_video is not None and user_id and file_name:
+        # Construct asset from provided metadata (no API call needed!)
+        asset = Asset(
+            id=asset_id,
+            user_id=user_id,
+            file_name=file_name,
+            width=0,  # Not needed for download
+            height=0,  # Not needed for download
+            video_file_name=video_file_name,
+            video_url=video_url,
+        )
+    else:
+        # Fall back to API lookup (for backward compatibility or direct API calls)
+        asset = manager.get_asset_by_id(frame_id, asset_id)
+        if asset is None:
+            raise HTTPException(status_code=404, detail=f"Asset {asset_id} not found")
     
     # Download to cache directory (persistent)
     cache_dir = os.path.join(manager.base_file_path, frame_id)
