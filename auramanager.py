@@ -325,20 +325,27 @@ class AuraManager:
                 continue
 
             asset_type = "video" if asset.is_video else "photo"
+            
+            # Check if file already exists (cached) before downloading
+            filename = f"{asset.id}{asset.extension}"
+            file_path = os.path.join(output_dir, filename)
+            
+            if os.path.isfile(file_path) and os.path.getsize(file_path) > 0:
+                print(f"[{i}/{len(assets)}] Cached {asset_type}: {asset.id}")
+                skipped += 1
+                continue
+
             print(f"[{i}/{len(assets)}] Downloading {asset_type}: {asset.id}...")
 
             result = self.download_asset(asset, output_dir)
             
-            if result:
-                if os.path.getsize(result) > 0:
-                    downloaded += 1
-                else:
-                    print(f"  Skipped (already exists)")
-                    skipped += 1
+            if result and os.path.getsize(result) > 0:
+                downloaded += 1
             else:
+                print(f"  Failed to download")
                 skipped += 1
 
-            # Delay to avoid throttling
+            # Delay to avoid throttling (only for actual downloads)
             if i < len(assets) and delay > 0:
                 time.sleep(delay)
 
