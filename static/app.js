@@ -192,6 +192,10 @@ const elements = {
     // Sidebar
     frameList: document.getElementById('frameList'),
     syncAllBtn: document.getElementById('syncAllBtn'),
+    syncAllDropdownBtn: document.getElementById('syncAllDropdownBtn'),
+    syncAllDropdown: document.getElementById('syncAllDropdown'),
+    syncAllNormalBtn: document.getElementById('syncAllNormalBtn'),
+    syncAllDryRunBtn: document.getElementById('syncAllDryRunBtn'),
     healthStatus: document.getElementById('healthStatus'),
 
     // Header
@@ -804,17 +808,19 @@ async function startSync() {
     }
 }
 
-async function syncAllFrames() {
-    if (!confirm('This will sync all frames with each other. Continue?')) {
+async function syncAllFrames(dryRun = false) {
+    const action = dryRun ? 'preview sync of' : 'sync';
+    if (!confirm(`This will ${action} all frames with each other. Continue?`)) {
         return;
     }
 
     try {
-        showToast('Starting sync of all frames...', 'success');
-        const result = await api.syncAllFrames();
+        const message = dryRun ? 'Running dry run...' : 'Starting sync of all frames...';
+        showToast(message, 'success');
+        const result = await api.syncAllFrames({ dryRun });
         showToast(result.message);
         
-        if (state.currentFrameId) {
+        if (!dryRun && state.currentFrameId) {
             await loadAssets();
             await loadStats();
         }
@@ -948,7 +954,28 @@ function initEventListeners() {
     elements.downloadAllBtn.addEventListener('click', downloadAllAssets);
     elements.fitAllBtn.addEventListener('click', fitAllAssets);
     elements.uploadBtn.addEventListener('click', openUploadModal);
-    elements.syncAllBtn.addEventListener('click', openSyncModal);
+    
+    // Sync All split button
+    elements.syncAllBtn.addEventListener('click', () => syncAllFrames(false));
+    elements.syncAllDropdownBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        elements.syncAllDropdown.classList.toggle('open');
+    });
+    elements.syncAllNormalBtn.addEventListener('click', () => {
+        elements.syncAllDropdown.classList.remove('open');
+        syncAllFrames(false);
+    });
+    elements.syncAllDryRunBtn.addEventListener('click', () => {
+        elements.syncAllDropdown.classList.remove('open');
+        syncAllFrames(true);
+    });
+    
+    // Close dropdown when clicking outside
+    document.addEventListener('click', (e) => {
+        if (!e.target.closest('.split-btn-container')) {
+            elements.syncAllDropdown.classList.remove('open');
+        }
+    });
 
     // Filter buttons
     document.querySelectorAll('.filter-btn').forEach(btn => {

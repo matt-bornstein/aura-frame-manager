@@ -711,6 +711,85 @@ body {
     width: 100%;
 }
 
+/* Split Button */
+.split-btn-container {
+    position: relative;
+    display: flex;
+    width: 100%;
+}
+
+.split-btn-main {
+    flex: 1;
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+    justify-content: flex-start;
+}
+
+.split-btn-toggle {
+    padding: 10px 8px;
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+    border-left: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.split-btn-toggle svg {
+    width: 16px;
+    height: 16px;
+}
+
+.split-btn-dropdown {
+    position: absolute;
+    bottom: 100%;
+    left: 0;
+    right: 0;
+    background: var(--bg-primary);
+    border-radius: var(--border-radius);
+    box-shadow: var(--shadow-lg);
+    margin-bottom: 4px;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(8px);
+    transition: all var(--transition-fast);
+    z-index: 10;
+    overflow: hidden;
+}
+
+.split-btn-dropdown.open {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+}
+
+.split-btn-option {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    padding: 12px 14px;
+    border: none;
+    background: transparent;
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 500;
+    text-align: left;
+    cursor: pointer;
+    transition: background var(--transition-fast);
+}
+
+.split-btn-option:hover {
+    background: var(--bg-tertiary);
+}
+
+.split-btn-option:first-child {
+    border-bottom: 1px solid var(--border-color);
+}
+
+.split-btn-option svg {
+    width: 16px;
+    height: 16px;
+    color: var(--text-secondary);
+}
+
 /* =============================================================================
    Modal
    ============================================================================= */

@@ -746,12 +746,12 @@ class AuraManager:
         if dry_run:
             for asset in to_sync:
                 asset_type = "video" if asset.is_video else "photo"
-                print(f"  Would sync: {asset.id} ({asset_type})")
+                print(f"  Would sync: {asset.id} ({asset_type}) from {source_frame_id} -> {target_frame_id}")
             return len(to_sync), 0
 
-        # Download and upload each asset
-        temp_dir = os.path.join(self.debug_file_path, "sync_temp")
-        pathlib.Path(temp_dir).mkdir(parents=True, exist_ok=True)
+        # Download to the normal images directory (uses cache if already downloaded)
+        output_dir = os.path.join(self.base_file_path, source_frame_id)
+        pathlib.Path(output_dir).mkdir(parents=True, exist_ok=True)
 
         synced = 0
         skipped = 0
@@ -760,8 +760,8 @@ class AuraManager:
             asset_type = "video" if asset.is_video else "photo"
             print(f"[{i}/{len(to_sync)}] Syncing {asset_type}: {asset.id}")
 
-            # Download from source
-            local_path = self.download_asset(asset, temp_dir)
+            # Download from source (will use cache if already exists)
+            local_path = self.download_asset(asset, output_dir)
             if not local_path:
                 print(f"  Failed to download")
                 skipped += 1
@@ -773,12 +773,6 @@ class AuraManager:
                 synced += 1
             else:
                 skipped += 1
-
-            # Clean up temp file
-            try:
-                os.remove(local_path)
-            except:
-                pass
 
             time.sleep(2)
 
