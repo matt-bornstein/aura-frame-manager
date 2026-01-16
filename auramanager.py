@@ -15,6 +15,7 @@ import pathlib
 import mimetypes
 from typing import Optional, List, Dict, Any, Tuple
 from dataclasses import dataclass
+from PIL import Image
 
 
 @dataclass
@@ -270,8 +271,19 @@ class AuraManager:
             return file_path
 
         except Exception as e:
-            print(f"Error downloading {asset.id}: {e}")
-            return None
+            print(f"Error downloading {asset.id}: {e}, retrying in 2 seconds...")
+            time.sleep(2)
+            try:
+                response = requests.get(url, stream=True)
+                response.raise_for_status()
+                
+                with open(file_path, "wb") as out_file:
+                    shutil.copyfileobj(response.raw, out_file)
+                
+                return file_path
+            except Exception as e2:
+                print(f"Retry failed for {asset.id}: {e2}")
+                return None
 
     def download_all_assets(
         self,
@@ -279,7 +291,7 @@ class AuraManager:
         output_dir: Optional[str] = None,
         photos_only: bool = False,
         videos_only: bool = False,
-        delay: float = 2.0
+        delay: float = 0
     ) -> Tuple[int, int]:
         """
         Download all assets from a frame.
@@ -998,3 +1010,131 @@ class AuraManager:
         }
         
         return stats
+
+    # =========================================================================
+    # THUMBNAIL GENERATION
+    # =========================================================================
+
+    # Thumbnail size - 400px on longest side for future-proofing
+    THUMBNAIL_MAX_SIZE = 400
+
+    def get_thumbnail_dir(self, frame_id: str) -> str:
+        """Get the thumbnail directory path for a frame."""
+        return os.path.join(self.base_file_path, frame_id, "thumbnails")
+
+    def get_thumbnail_path(self, frame_id: str, asset_id: str) -> Optional[str]:
+        """
+        Get the path to an existing thumbnail if it exists.
+        
+        Args:
+            frame_id: The frame ID.
+            asset_id: The asset ID.
+            
+        Returns:
+            Path to thumbnail if it exists, None otherwise.
+        """
+        thumb_dir = self.get_thumbnail_dir(frame_id)
+        if not os.path.isdir(thumb_dir):
+            return None
+        
+        # Look for thumbnail with any extension
+        for filename in os.listdir(thumb_dir):
+            if filename.startswith(asset_id + "."):
+                return os.path.join(thumb_dir, filename)
+        return None
+
+    def generate_thumbnail(self, source_path: str, thumb_path: str) -> Optional[str]:
+        """
+        Generate a thumbnail from a source image.
+        
+        Args:
+            source_path: Path to the full-size image.
+            thumb_path: Path where thumbnail should be saved.
+            
+        Returns:
+            Path to generated thumbnail, or None on failure.
+        """
+        try:
+            with Image.open(source_path) as img:
+                # Convert to RGB if necessary (handles RGBA, P mode, etc.)
+                if img.mode in ('RGBA', 'P'):
+                    img = img.convert('RGB')
+                
+                # Calculate thumbnail size maintaining aspect ratio
+                img.thumbnail((self.THUMBNAIL_MAX_SIZE, self.THUMBNAIL_MAX_SIZE), Image.Resampling.LANCZOS)
+                
+                # Ensure directory exists
+                os.makedirs(os.path.dirname(thumb_path), exist_ok=True)
+                
+                # Save as JPEG for smaller file size
+                img.save(thumb_path, "JPEG", quality=85, optimize=True)
+                
+            return thumb_path
+        except Exception as e:
+            print(f"Error generating thumbnail: {e}")
+            return None
+
+    def get_cached_asset_path(self, frame_id: str, asset_id: str) -> Optional[str]:
+        """
+        Get the path to a cached full-size asset if it exists.
+        
+        Args:
+            frame_id: The frame ID.
+            asset_id: The asset ID.
+            
+        Returns:
+            Path to cached asset if it exists, None otherwise.
+        """
+        cache_dir = os.path.join(self.base_file_path, frame_id)
+        if not os.path.isdir(cache_dir):
+            return None
+        
+        for filename in os.listdir(cache_dir):
+            # Skip thumbnails directory
+            if filename == "thumbnails":
+                continue
+            if filename.startswith(asset_id + ".") or filename.startswith(asset_id + "_"):
+                return os.path.join(cache_dir, filename)
+        return None
+
+    def get_or_create_thumbnail(self, frame_id: str, asset: Asset) -> Optional[str]:
+        """
+        Get or create a thumbnail for an asset.
+        
+        Logic:
+        1. Check for thumbnail in cache - return if exists
+        2. Check for full image in cache - generate thumbnail if exists
+        3. Download full image from Aura, cache it, generate thumbnail
+        
+        Args:
+            frame_id: The frame ID.
+            asset: The asset to get/create thumbnail for.
+            
+        Returns:
+            Path to thumbnail, or None on failure.
+        """
+        # Videos don't get thumbnails (yet) - return None
+        if asset.is_video:
+            return None
+        
+        # 1. Check for existing thumbnail
+        thumb_path = self.get_thumbnail_path(frame_id, asset.id)
+        if thumb_path:
+            return thumb_path
+        
+        # 2. Check for cached full-size image
+        full_path = self.get_cached_asset_path(frame_id, asset.id)
+        
+        # 3. If no cached full-size, download it
+        if not full_path:
+            cache_dir = os.path.join(self.base_file_path, frame_id)
+            os.makedirs(cache_dir, exist_ok=True)
+            full_path = self.download_asset(asset, cache_dir)
+            if not full_path:
+                return None
+        
+        # 4. Generate thumbnail from full-size image
+        thumb_dir = self.get_thumbnail_dir(frame_id)
+        thumb_path = os.path.join(thumb_dir, f"{asset.id}.jpg")
+        
+        return self.generate_thumbnail(full_path, thumb_path)

@@ -136,9 +136,23 @@ const api = {
         return this.request('/health');
     },
 
-    // Download URL
+    // Download URL (full size)
     getDownloadUrl(frameId, assetId) {
         return `${this.baseUrl}/frames/${frameId}/assets/${assetId}/download`;
+    },
+
+    // Thumbnail URL (for grid/list views)
+    getThumbnailUrl(frameId, assetId) {
+        return `${this.baseUrl}/frames/${frameId}/assets/${assetId}/download?thumbnail=true`;
+    },
+
+    // Download All URL (returns zip file)
+    getDownloadAllUrl(frameId, options = {}) {
+        const params = new URLSearchParams();
+        if (options.photosOnly) params.set('photos_only', 'true');
+        if (options.videosOnly) params.set('videos_only', 'true');
+        const query = params.toString() ? `?${params}` : '';
+        return `${this.baseUrl}/frames/${frameId}/download/zip${query}`;
     },
 };
 
@@ -157,6 +171,8 @@ const elements = {
     pageSubtitle: document.getElementById('pageSubtitle'),
     headerActions: document.getElementById('headerActions'),
     refreshBtn: document.getElementById('refreshBtn'),
+    downloadAllBtn: document.getElementById('downloadAllBtn'),
+    downloadAllLoading: document.getElementById('downloadAllLoading'),
     fitAllBtn: document.getElementById('fitAllBtn'),
     uploadBtn: document.getElementById('uploadBtn'),
 
@@ -417,13 +433,13 @@ function renderGridView(assets) {
                         Video
                     </div>
                 ` : ''}
-                <img src="${api.getDownloadUrl(state.currentFrameId, asset.id)}" 
+                <img src="${api.getThumbnailUrl(state.currentFrameId, asset.id)}" 
                      alt="${asset.file_name}"
                      loading="lazy"
                      onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 24 24%22 fill=%22%23cbd5e1%22><rect width=%2224%22 height=%2224%22/><text x=%2212%22 y=%2214%22 text-anchor=%22middle%22 font-size=%228%22 fill=%22%2394a3b8%22>?</text></svg>'">
             </div>
             <div class="asset-card-info">
-                <div class="asset-card-name">${asset.file_name}</div>
+                <div class="asset-card-name">${asset.id}</div>
                 <div class="asset-card-meta">${asset.width} x ${asset.height}</div>
             </div>
         </div>
@@ -445,13 +461,13 @@ function renderListView(assets) {
     elements.assetsList.innerHTML = assets.map(asset => `
         <div class="asset-row" data-asset-id="${asset.id}">
             <div class="asset-row-thumbnail">
-                <img src="${api.getDownloadUrl(state.currentFrameId, asset.id)}" 
+                <img src="${api.getThumbnailUrl(state.currentFrameId, asset.id)}" 
                      alt="${asset.file_name}"
                      loading="lazy"
                      onerror="this.style.display='none'">
             </div>
             <div class="asset-row-info">
-                <div class="asset-row-name">${asset.file_name}</div>
+                <div class="asset-row-name">${asset.id}</div>
                 <div class="asset-row-meta">${asset.width} x ${asset.height} ${asset.taken_at ? ' • ' + formatDate(asset.taken_at) : ''}</div>
             </div>
             <span class="asset-row-type ${asset.is_video ? 'video' : ''}">${asset.is_video ? 'Video' : 'Photo'}</span>
@@ -803,6 +819,75 @@ async function fitAllAssets() {
 }
 
 // =============================================================================
+// Download All
+// =============================================================================
+
+async function downloadAllAssets() {
+    if (!state.currentFrameId) return;
+
+    const assetCount = state.assets.length;
+    if (assetCount === 0) {
+        showToast('No assets to download', 'warning');
+        return;
+    }
+
+    if (!confirm(`This will download ${assetCount} assets as a ZIP file. This may take a while. Continue?`)) {
+        return;
+    }
+
+    // Show loading state
+    const btnText = elements.downloadAllBtn.querySelector('.btn-text');
+    const btnLoading = elements.downloadAllLoading;
+    btnText.style.display = 'none';
+    btnLoading.style.display = 'flex';
+    elements.downloadAllBtn.disabled = true;
+
+    showToast('Preparing download... This may take a few minutes for large collections.', 'success');
+
+    try {
+        // Create a hidden link and trigger download
+        const url = api.getDownloadAllUrl(state.currentFrameId);
+        
+        // Use fetch to handle the download so we can show proper errors
+        const response = await fetch(url);
+        
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({ detail: 'Download failed' }));
+            throw new Error(error.detail || `HTTP ${response.status}`);
+        }
+        
+        // Get the filename from Content-Disposition header or use default
+        const contentDisposition = response.headers.get('Content-Disposition');
+        let filename = 'assets.zip';
+        if (contentDisposition) {
+            const match = contentDisposition.match(/filename="?([^";\n]+)"?/);
+            if (match) filename = match[1];
+        }
+        
+        // Create blob and download
+        const blob = await response.blob();
+        const downloadUrl = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = downloadUrl;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        window.URL.revokeObjectURL(downloadUrl);
+        
+        showToast('Download started! Check your downloads folder.', 'success');
+    } catch (error) {
+        console.error('Download all failed:', error);
+        showToast('Failed to download assets: ' + error.message, 'error');
+    } finally {
+        // Reset button state
+        btnText.style.display = 'inline';
+        btnLoading.style.display = 'none';
+        elements.downloadAllBtn.disabled = false;
+    }
+}
+
+// =============================================================================
 // Event Listeners
 // =============================================================================
 
@@ -814,6 +899,7 @@ function initEventListeners() {
         showToast('Refreshed');
     });
 
+    elements.downloadAllBtn.addEventListener('click', downloadAllAssets);
     elements.fitAllBtn.addEventListener('click', fitAllAssets);
     elements.uploadBtn.addEventListener('click', openUploadModal);
     elements.syncAllBtn.addEventListener('click', openSyncModal);

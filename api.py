@@ -16,6 +16,8 @@ API docs available at http://localhost:8000/docs
 import os
 import tempfile
 import shutil
+import zipfile
+import uuid
 from typing import Optional, List
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -273,32 +275,80 @@ async def get_asset(frame_id: str, asset_id: str):
 # =============================================================================
 
 @app.get("/frames/{frame_id}/assets/{asset_id}/download", tags=["Download"])
-async def download_asset(frame_id: str, asset_id: str):
-    """Download a specific asset."""
+async def download_asset(
+    frame_id: str,
+    asset_id: str,
+    thumbnail: bool = Query(False, description="Return thumbnail instead of full image"),
+):
+    """Download a specific asset. Serves from cache if available. Use thumbnail=true for grid views."""
     manager = get_aura()
+    
+    # 1. If requesting thumbnail, check thumbnail cache first (no API call needed)
+    if thumbnail:
+        thumb_path = manager.get_thumbnail_path(frame_id, asset_id)
+        if thumb_path and os.path.isfile(thumb_path):
+            return FileResponse(
+                path=thumb_path,
+                filename=f"{asset_id}_thumb.jpg",
+                media_type="image/jpeg"
+            )
+    
+    # 2. Check full-size image cache (no API call needed)
+    cached_file = manager.get_cached_asset_path(frame_id, asset_id)
+    
+    if cached_file and os.path.isfile(cached_file):
+        # If thumbnail requested but not cached, generate from cached full image
+        if thumbnail:
+            ext = os.path.splitext(cached_file)[1].lower()
+            is_video = ext in [".mp4", ".mov", ".avi", ".mkv", ".webm"]
+            if not is_video:
+                thumb_dir = manager.get_thumbnail_dir(frame_id)
+                thumb_path = os.path.join(thumb_dir, f"{asset_id}.jpg")
+                generated = manager.generate_thumbnail(cached_file, thumb_path)
+                if generated:
+                    return FileResponse(
+                        path=generated,
+                        filename=f"{asset_id}_thumb.jpg",
+                        media_type="image/jpeg"
+                    )
+        
+        # Serve full-size from cache
+        filename = os.path.basename(cached_file)
+        ext = os.path.splitext(filename)[1].lower()
+        media_type = "video/mp4" if ext in [".mp4", ".mov", ".avi", ".mkv", ".webm"] else "image/jpeg"
+        return FileResponse(path=cached_file, filename=filename, media_type=media_type)
+    
+    # 3. Not in any cache - need to fetch asset info from API and download
     asset = manager.get_asset_by_id(frame_id, asset_id)
     if asset is None:
         raise HTTPException(status_code=404, detail=f"Asset {asset_id} not found")
     
-    # Download to temp directory
-    temp_dir = tempfile.mkdtemp()
+    # Download to cache directory (persistent)
+    cache_dir = os.path.join(manager.base_file_path, frame_id)
+    os.makedirs(cache_dir, exist_ok=True)
     try:
-        file_path = manager.download_asset(asset, temp_dir)
+        file_path = manager.download_asset(asset, cache_dir)
         if file_path is None:
             raise HTTPException(status_code=500, detail="Failed to download asset")
         
-        # Return file response
+        # If thumbnail requested for an image, generate it
+        if thumbnail and not asset.is_video:
+            thumb_dir = manager.get_thumbnail_dir(frame_id)
+            thumb_path = os.path.join(thumb_dir, f"{asset_id}.jpg")
+            generated = manager.generate_thumbnail(file_path, thumb_path)
+            if generated:
+                return FileResponse(
+                    path=generated,
+                    filename=f"{asset_id}_thumb.jpg",
+                    media_type="image/jpeg"
+                )
+        
+        # Return full file response (file stays in cache)
         filename = os.path.basename(file_path)
         media_type = "video/mp4" if asset.is_video else "image/jpeg"
         
-        return FileResponse(
-            path=file_path,
-            filename=filename,
-            media_type=media_type,
-            background=BackgroundTasks().add_task(shutil.rmtree, temp_dir, ignore_errors=True)
-        )
+        return FileResponse(path=file_path, filename=filename, media_type=media_type)
     except Exception as e:
-        shutil.rmtree(temp_dir, ignore_errors=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -327,6 +377,82 @@ async def download_all_assets(
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/frames/{frame_id}/download/zip", tags=["Download"])
+async def download_all_assets_zip(
+    frame_id: str,
+    photos_only: bool = Query(False, description="Only download photos"),
+    videos_only: bool = Query(False, description="Only download videos"),
+):
+    """
+    Download all assets from a frame as a ZIP file.
+    
+    Assets are saved to the server's images directory and then zipped for download.
+    The original files remain on the server after download.
+    """
+    manager = get_aura()
+    
+    # Get frame name for the zip filename
+    frame_name = frame_id
+    for frame in manager.config.get("frames", []):
+        if frame["frame_id"] == frame_id:
+            frame_name = frame.get("name", frame_id)
+            break
+    
+    # Sanitize frame name for filename
+    safe_frame_name = "".join(c if c.isalnum() or c in "-_ " else "_" for c in frame_name)
+    safe_frame_name = safe_frame_name.strip().replace(" ", "_")
+    
+    # Download directory - persistent on server
+    download_dir = os.path.join(manager.base_file_path, frame_id)
+    os.makedirs(download_dir, exist_ok=True)
+    
+    try:
+        # Download all assets to the server directory
+        downloaded, skipped = manager.download_all_assets(
+            frame_id,
+            output_dir=download_dir,
+            photos_only=photos_only,
+            videos_only=videos_only,
+            delay=0.5,  # Shorter delay for better UX
+        )
+        
+        if downloaded == 0 and skipped == 0:
+            raise HTTPException(status_code=404, detail="No assets found on this frame")
+        
+        # Get list of downloaded files
+        files_to_zip = []
+        for filename in os.listdir(download_dir):
+            file_path = os.path.join(download_dir, filename)
+            if os.path.isfile(file_path):
+                files_to_zip.append(file_path)
+        
+        if not files_to_zip:
+            raise HTTPException(status_code=404, detail="No files to download")
+        
+        # Create zip file in a temp location
+        zip_filename = f"{safe_frame_name}_assets.zip"
+        zip_dir = tempfile.mkdtemp()
+        zip_path = os.path.join(zip_dir, zip_filename)
+        
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            for file_path in files_to_zip:
+                arcname = os.path.basename(file_path)
+                zipf.write(file_path, arcname)
+        
+        # Return zip file - cleanup only the zip temp dir after download
+        return FileResponse(
+            path=zip_path,
+            filename=zip_filename,
+            media_type="application/zip",
+            background=BackgroundTasks().add_task(shutil.rmtree, zip_dir, ignore_errors=True)
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to create download: {str(e)}")
 
 
 # =============================================================================

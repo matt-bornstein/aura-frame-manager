@@ -217,7 +217,7 @@ def main():
     download_parser.add_argument("--output", "-o", help="Output directory")
     download_parser.add_argument("--photos-only", action="store_true", help="Only download photos")
     download_parser.add_argument("--videos-only", action="store_true", help="Only download videos")
-    download_parser.add_argument("--delay", type=float, default=2.0, help="Delay between downloads (seconds)")
+    download_parser.add_argument("--delay", type=float, default=0, help="Delay between downloads (seconds)")
 
     # Upload command
     upload_parser = subparsers.add_parser("upload", help="Upload assets to a frame")
