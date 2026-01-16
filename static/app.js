@@ -345,9 +345,15 @@ function renderFrameList() {
     });
 }
 
-async function selectFrame(frameId) {
+async function selectFrame(frameId, updateUrl = true) {
     state.currentFrameId = frameId;
     const frame = state.frames.find(f => f.frame_id === frameId);
+
+    // Update URL with frame ID
+    if (updateUrl) {
+        const newUrl = `/${frameId}`;
+        history.pushState({ frameId }, '', newUrl);
+    }
 
     // Update UI
     elements.pageTitle.textContent = frame ? frame.name : 'Frame';
@@ -1012,6 +1018,36 @@ function initEventListeners() {
 }
 
 // =============================================================================
+// URL / Deep Linking
+// =============================================================================
+
+function getFrameIdFromUrl() {
+    const path = window.location.pathname;
+    // Extract frame ID from path like "/frame-id-here"
+    const match = path.match(/^\/([a-f0-9-]+)$/i);
+    return match ? match[1] : null;
+}
+
+function handlePopState(event) {
+    const frameId = event.state?.frameId || getFrameIdFromUrl();
+    if (frameId && state.frames.some(f => f.frame_id === frameId)) {
+        selectFrame(frameId, false);
+    } else if (!frameId) {
+        // Navigated back to root - clear selection
+        state.currentFrameId = null;
+        elements.pageTitle.textContent = 'Select a Frame';
+        elements.pageSubtitle.textContent = 'Choose a frame from the sidebar to manage its assets';
+        elements.headerActions.style.display = 'none';
+        elements.statsBar.style.display = 'none';
+        elements.filterBar.style.display = 'none';
+        elements.emptyState.style.display = 'flex';
+        elements.assetsGrid.style.display = 'none';
+        elements.assetsList.style.display = 'none';
+        renderFrameList();
+    }
+}
+
+// =============================================================================
 // Initialization
 // =============================================================================
 
@@ -1019,6 +1055,15 @@ async function init() {
     initEventListeners();
     await checkHealth();
     await loadFrames();
+    
+    // Handle browser back/forward navigation
+    window.addEventListener('popstate', handlePopState);
+    
+    // Check URL for deep link to frame
+    const frameIdFromUrl = getFrameIdFromUrl();
+    if (frameIdFromUrl && state.frames.some(f => f.frame_id === frameIdFromUrl)) {
+        await selectFrame(frameIdFromUrl, false);
+    }
     
     // Check health periodically
     setInterval(checkHealth, 30000);
