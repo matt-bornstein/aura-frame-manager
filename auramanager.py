@@ -857,12 +857,13 @@ class AuraManager:
         }
 
         if fit_to_frame:
-            # Set to show entire image
+            # Set to show entire image in both orientations
+            full_rect = f"0,0,{asset.width},{asset.height}"
             payload.update({
                 "user_landscape_16_10_rect": None,
-                "user_landscape_rect": f"0,0,{asset.width},{asset.height}",
+                "user_landscape_rect": full_rect,
                 "user_portrait_4_5_rect": None,
-                "user_portrait_rect": None,
+                "user_portrait_rect": full_rect,
             })
         else:
             # Use custom rects

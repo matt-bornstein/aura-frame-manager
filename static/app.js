@@ -851,12 +851,12 @@ async function checkHealth() {
 async function fitAllAssets() {
     if (!state.currentFrameId) return;
 
-    if (!confirm('This will fit all portrait images on this frame to show the complete picture. Continue?')) {
+    if (!confirm('This will fit all images on this frame to show the complete picture (removes auto-crop). Continue?')) {
         return;
     }
 
     try {
-        const result = await api.fitAllAssets(state.currentFrameId);
+        const result = await api.fitAllAssets(state.currentFrameId, true);
         showToast(result.message);
     } catch (error) {
         console.error('Fit all failed:', error);
