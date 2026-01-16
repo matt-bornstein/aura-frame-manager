@@ -751,13 +751,13 @@ async def serve_ui():
     )
 
 
-@app.get("/{frame_id:path}", response_class=HTMLResponse, include_in_schema=False)
-async def serve_ui_deep_link(frame_id: str):
-    """Serve the web UI for deep link routes (e.g., /<frame_id>)."""
-    # Only serve index.html for valid UUID-like paths (deep links to frames)
-    # This allows client-side routing to handle the frame selection
+@app.get("/{path:path}", response_class=HTMLResponse, include_in_schema=False)
+async def serve_ui_deep_link(path: str):
+    """Serve the web UI for deep link routes (e.g., /<frame_id> or /<frame_id>/<asset_id>)."""
+    # Only serve index.html for valid UUID-like paths (deep links to frames/assets)
+    # Matches: <frame_id> or <frame_id>/<asset_id>
     import re
-    if re.match(r'^[a-f0-9-]+$', frame_id, re.IGNORECASE):
+    if re.match(r'^[a-f0-9-]+(?:/[a-f0-9-]+)?$', path, re.IGNORECASE):
         index_path = STATIC_DIR / "index.html"
         if index_path.exists():
             return FileResponse(index_path)

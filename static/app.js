@@ -530,11 +530,17 @@ function formatDate(dateString) {
 // Asset Modal
 // =============================================================================
 
-function openAssetModal(assetId) {
+function openAssetModal(assetId, updateUrl = true) {
     const asset = state.assets.find(a => a.id === assetId);
     if (!asset) return;
 
     state.currentAsset = asset;
+
+    // Update URL with asset ID
+    if (updateUrl && state.currentFrameId) {
+        const newUrl = `/${state.currentFrameId}/${assetId}`;
+        history.pushState({ frameId: state.currentFrameId, assetId }, '', newUrl);
+    }
 
     // Update modal content
     elements.assetModalTitle.textContent = asset.is_video ? 'Video Details' : 'Photo Details';
@@ -560,9 +566,15 @@ function openAssetModal(assetId) {
     elements.assetModal.classList.add('open');
 }
 
-function closeAssetModal() {
+function closeAssetModal(updateUrl = true) {
     elements.assetModal.classList.remove('open');
     state.currentAsset = null;
+
+    // Update URL to remove asset ID (back to frame-only)
+    if (updateUrl && state.currentFrameId) {
+        const newUrl = `/${state.currentFrameId}`;
+        history.pushState({ frameId: state.currentFrameId }, '', newUrl);
+    }
 }
 
 async function deleteCurrentAsset() {
@@ -1021,19 +1033,43 @@ function initEventListeners() {
 // URL / Deep Linking
 // =============================================================================
 
-function getFrameIdFromUrl() {
+function getIdsFromUrl() {
     const path = window.location.pathname;
-    // Extract frame ID from path like "/frame-id-here"
-    const match = path.match(/^\/([a-f0-9-]+)$/i);
-    return match ? match[1] : null;
+    // Extract frame ID and optional asset ID from path like "/<frame_id>" or "/<frame_id>/<asset_id>"
+    const match = path.match(/^\/([a-f0-9-]+)(?:\/([a-f0-9-]+))?$/i);
+    return {
+        frameId: match ? match[1] : null,
+        assetId: match ? match[2] : null
+    };
 }
 
-function handlePopState(event) {
-    const frameId = event.state?.frameId || getFrameIdFromUrl();
+async function handlePopState(event) {
+    const { frameId, assetId } = event.state || getIdsFromUrl();
+    
     if (frameId && state.frames.some(f => f.frame_id === frameId)) {
-        selectFrame(frameId, false);
+        // If frame changed, select it
+        if (frameId !== state.currentFrameId) {
+            await selectFrame(frameId, false);
+        }
+        
+        // Handle asset modal state
+        if (assetId) {
+            // Open asset modal if we have the asset loaded
+            const asset = state.assets.find(a => a.id === assetId);
+            if (asset) {
+                openAssetModal(assetId, false);
+            }
+        } else {
+            // Close asset modal if open
+            if (state.currentAsset) {
+                closeAssetModal(false);
+            }
+        }
     } else if (!frameId) {
         // Navigated back to root - clear selection
+        if (state.currentAsset) {
+            closeAssetModal(false);
+        }
         state.currentFrameId = null;
         elements.pageTitle.textContent = 'Select a Frame';
         elements.pageSubtitle.textContent = 'Choose a frame from the sidebar to manage its assets';
@@ -1059,10 +1095,18 @@ async function init() {
     // Handle browser back/forward navigation
     window.addEventListener('popstate', handlePopState);
     
-    // Check URL for deep link to frame
-    const frameIdFromUrl = getFrameIdFromUrl();
-    if (frameIdFromUrl && state.frames.some(f => f.frame_id === frameIdFromUrl)) {
-        await selectFrame(frameIdFromUrl, false);
+    // Check URL for deep link to frame and/or asset
+    const { frameId, assetId } = getIdsFromUrl();
+    if (frameId && state.frames.some(f => f.frame_id === frameId)) {
+        await selectFrame(frameId, false);
+        
+        // If asset ID in URL, open its modal after assets are loaded
+        if (assetId) {
+            const asset = state.assets.find(a => a.id === assetId);
+            if (asset) {
+                openAssetModal(assetId, false);
+            }
+        }
     }
     
     // Check health periodically
