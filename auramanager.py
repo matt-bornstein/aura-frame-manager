@@ -13,9 +13,13 @@ import time
 import shutil
 import pathlib
 import mimetypes
+import tempfile
+import uuid
+from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any, Tuple
 from dataclasses import dataclass
-from PIL import Image
+import boto3
+from PIL import Image, ExifTags
 import cv2
 
 
@@ -76,6 +80,7 @@ class AuraManager:
     # API endpoints
     BASE_API_URL = "https://api.pushd.com/v5"
     IMAGE_PROXY_URL = "https://imgproxy.pushd.com"
+    DEFAULT_USER_AGENT = "Aura/4.7.1523 (Android 35; Client)"
 
     def __init__(self, config_path: str = "config.yaml"):
         """
@@ -89,6 +94,13 @@ class AuraManager:
         self.password = self.config["accounts"][0]["password"]
         self.base_file_path = self.config.get("base_file_path", "images")
         self.debug_file_path = self.config.get("debug_file_path", "debug")
+        self.device_identifier = self.config.get("device_identifier", "aura-frame-manager")
+        self.client_device_id = self.config.get("client_device_id", self.device_identifier)
+        self.cognito_identity_id = self.config.get("cognito_identity_id")
+        self.cognito_region = self.config.get("cognito_region", "us-east-1")
+        self.s3_bucket = self.config.get("s3_bucket", "images.senseapp.co")
+        self.s3_region = self.config.get("s3_region", "us-east-1")
+        self._cognito_credentials: Optional[Dict[str, Any]] = None
         self.session: Optional[requests.Session] = None
         self.user_id: Optional[str] = None
         
@@ -116,8 +128,8 @@ class AuraManager:
         """
         login_url = f"{self.BASE_API_URL}/login.json"
         login_payload = {
-            "identifier_for_vendor": "aura-frame-manager",
-            "client_device_id": "aura-frame-manager",
+            "identifier_for_vendor": self.device_identifier,
+            "client_device_id": self.client_device_id,
             "app_identifier": "com.pushd.Framelord",
             "locale": "en",
             "user": {"email": self.email, "password": self.password},
@@ -139,6 +151,9 @@ class AuraManager:
         self.session.headers.update({
             "X-User-Id": self.user_id,
             "X-Token-Auth": json_data["result"]["current_user"]["auth_token"],
+            "X-Device-Identifier": self.device_identifier,
+            "X-Client-Device-Id": self.client_device_id,
+            "User-Agent": self.DEFAULT_USER_AGENT,
         })
 
         return True
@@ -385,13 +400,268 @@ class AuraManager:
     # ASSET UPLOAD (LOCAL -> FRAME)
     # =========================================================================
     #
-    # NOTE: Upload functionality is EXPERIMENTAL. The Aura API endpoints for
-    # uploading are not publicly documented. These implementations are based
-    # on common REST API patterns and may not work correctly.
-    #
-    # If uploads fail, you may need to reverse-engineer the actual API by
-    # capturing network traffic from the official Aura mobile app.
+    # Uses Aura Android flow: Cognito creds -> S3 PUT -> assets/batch_update -> select_asset.
+    # Legacy upload helpers remain below for reference.
     # =========================================================================
+
+    def _build_local_identifier(self, filename: str) -> str:
+        """Build a synthetic local identifier for Aura uploads."""
+        return f"{self.device_identifier}:/upload/{filename}"
+
+    def _format_timestamp(self, timestamp: float) -> str:
+        """Format a UNIX timestamp as ISO-8601 with Z suffix."""
+        return datetime.fromtimestamp(timestamp, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+
+    def _get_exif_orientation(self, image: Image.Image) -> int:
+        """Extract EXIF orientation if available, otherwise default to 1."""
+        try:
+            exif = image._getexif() or {}
+            for tag_id, value in exif.items():
+                tag = ExifTags.TAGS.get(tag_id, tag_id)
+                if tag == "Orientation":
+                    return int(value)
+        except Exception:
+            pass
+        return 1
+
+    def _get_exif_datetime(self, image: Image.Image) -> Optional[datetime]:
+        """Extract EXIF DateTimeOriginal if present."""
+        try:
+            exif = image._getexif() or {}
+            for tag_id, value in exif.items():
+                tag = ExifTags.TAGS.get(tag_id, tag_id)
+                if tag == "DateTimeOriginal" and isinstance(value, str):
+                    return datetime.strptime(value, "%Y:%m:%d %H:%M:%S").replace(tzinfo=timezone.utc)
+        except Exception:
+            return None
+        return None
+
+    def _get_image_metadata(self, file_path: str) -> Tuple[int, int, int, Optional[str]]:
+        """Return (width, height, orientation, taken_at) for an image file."""
+        with Image.open(file_path) as img:
+            width, height = img.size
+            orientation = self._get_exif_orientation(img)
+            taken_at_dt = self._get_exif_datetime(img)
+            taken_at = taken_at_dt.isoformat().replace("+00:00", "Z") if taken_at_dt else None
+        return width, height, orientation, taken_at
+
+    def _get_video_metadata(self, file_path: str) -> Tuple[int, int, float]:
+        """Return (width, height, duration_seconds) for a video file."""
+        cap = cv2.VideoCapture(file_path)
+        if not cap.isOpened():
+            return 0, 0, 0.0
+        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
+        frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0.0
+        cap.release()
+        duration = float(frame_count / fps) if fps > 0 else 0.0
+        return width, height, duration
+
+    def _get_cognito_credentials(self) -> Optional[Dict[str, Any]]:
+        """Fetch (and cache) Cognito credentials used for S3 uploads."""
+        if not self.cognito_identity_id:
+            print("Error: cognito_identity_id is not configured.")
+            return None
+
+        now = datetime.now(timezone.utc)
+        if self._cognito_credentials:
+            expiration = self._cognito_credentials.get("expiration")
+            if isinstance(expiration, datetime) and now < expiration - timedelta(seconds=60):
+                return self._cognito_credentials
+
+        url = f"https://cognito-identity.{self.cognito_region}.amazonaws.com/"
+        headers = {
+            "x-amz-target": "AWSCognitoIdentityService.GetCredentialsForIdentity",
+            "content-type": "application/x-amz-json-1.1",
+        }
+        payload = {"IdentityId": self.cognito_identity_id, "Logins": {}}
+        response = requests.post(url, headers=headers, data=json.dumps(payload))
+        if response.status_code != 200:
+            print(f"Cognito credentials error: {response.status_code} - {response.text}")
+            return None
+
+        data = response.json()
+        creds = data.get("Credentials") or {}
+        try:
+            expiration = datetime.fromtimestamp(float(creds["Expiration"]), tz=timezone.utc)
+        except Exception:
+            expiration = None
+
+        self._cognito_credentials = {
+            "access_key": creds.get("AccessKeyId"),
+            "secret_key": creds.get("SecretKey"),
+            "session_token": creds.get("SessionToken"),
+            "expiration": expiration,
+        }
+        return self._cognito_credentials
+
+    def _get_s3_client(self):
+        """Create an S3 client using Cognito credentials."""
+        creds = self._get_cognito_credentials()
+        if not creds or not creds.get("access_key"):
+            return None
+        session = boto3.session.Session(
+            aws_access_key_id=creds["access_key"],
+            aws_secret_access_key=creds["secret_key"],
+            aws_session_token=creds["session_token"],
+            region_name=self.s3_region,
+        )
+        return session.client("s3")
+
+    def _s3_put_object(self, file_path: str, key: str) -> bool:
+        """Upload a file to S3 using Cognito credentials."""
+        s3_client = self._get_s3_client()
+        if s3_client is None:
+            return False
+        try:
+            with open(file_path, "rb") as f:
+                s3_client.put_object(
+                    Bucket=self.s3_bucket,
+                    Key=key,
+                    Body=f,
+                    ContentType="application/octet-stream",
+                    GrantRead='uri="http://acs.amazonaws.com/groups/global/AllUsers"',
+                )
+            return True
+        except Exception as e:
+            print(f"S3 upload failed: {e}")
+            return False
+
+    def upload_photo_mobile(
+        self,
+        frame_id: str,
+        file_path: str,
+        caption: Optional[str] = None,
+    ) -> Optional[Dict]:
+        """Upload a photo using the Aura Android app flow."""
+        if not os.path.isfile(file_path):
+            print(f"Error: File not found: {file_path}")
+            return None
+
+        ext = os.path.splitext(file_path)[1].lower() or ".jpg"
+        file_name = f"{uuid.uuid4()}{ext}"
+        local_identifier = self._build_local_identifier(file_name)
+
+        width, height, orientation, taken_at = self._get_image_metadata(file_path)
+        modified_at = self._format_timestamp(os.path.getmtime(file_path))
+        if taken_at is None:
+            taken_at = modified_at
+
+        if not self._s3_put_object(file_path, file_name):
+            return None
+
+        batch_url = f"{self.BASE_API_URL}/assets/batch_update.json"
+        payload = {
+            "assets": [
+                {
+                    "local_identifier": local_identifier,
+                    "original_file_name": file_path,
+                    "width": width,
+                    "height": height,
+                    "taken_at": taken_at,
+                    "modified_at": modified_at,
+                    "selected": True,
+                    "favorite": False,
+                    "orientation": orientation,
+                    "file_name": file_name,
+                    "upload_priority": 20,
+                }
+            ]
+        }
+        batch_response = self.session.put(batch_url, json=payload)
+        if batch_response.status_code != 200:
+            print(f"Asset registration failed: {batch_response.status_code} - {batch_response.text}")
+            return None
+
+        select_url = f"{self.BASE_API_URL}/frames/{frame_id}/select_asset.json"
+        select_payload = {
+            "assets": [
+                {
+                    "user_id": self.user_id,
+                    "asset_local_identifier": local_identifier,
+                }
+            ]
+        }
+        select_response = self.session.post(select_url, json=select_payload)
+        if select_response.status_code != 200:
+            print(f"Select asset failed: {select_response.status_code} - {select_response.text}")
+            return None
+
+        return select_response.json()
+
+    def upload_video_mobile(
+        self,
+        frame_id: str,
+        file_path: str,
+        caption: Optional[str] = None,
+    ) -> Optional[Dict]:
+        """Upload a video using the Aura Android app flow."""
+        if not os.path.isfile(file_path):
+            print(f"Error: File not found: {file_path}")
+            return None
+
+        video_ext = os.path.splitext(file_path)[1].lower() or ".mp4"
+        video_file_name = f"{uuid.uuid4()}{video_ext}"
+        thumb_file_name = f"{uuid.uuid4()}.jpg"
+        local_identifier = self._build_local_identifier(video_file_name)
+
+        width, height, duration = self._get_video_metadata(file_path)
+        taken_at = self._format_timestamp(os.path.getmtime(file_path))
+        modified_at = taken_at
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            thumb_path = os.path.join(temp_dir, thumb_file_name)
+            if not self.generate_video_thumbnail(file_path, thumb_path):
+                print("Error: Failed to generate video thumbnail.")
+                return None
+
+            if not self._s3_put_object(thumb_path, thumb_file_name):
+                return None
+            if not self._s3_put_object(file_path, video_file_name):
+                return None
+
+        batch_url = f"{self.BASE_API_URL}/assets/batch_update.json"
+        payload = {
+            "assets": [
+                {
+                    "local_identifier": local_identifier,
+                    "original_file_name": file_path,
+                    "width": width,
+                    "height": height,
+                    "taken_at": taken_at,
+                    "modified_at": modified_at,
+                    "selected": True,
+                    "favorite": False,
+                    "orientation": 1,
+                    "file_name": thumb_file_name,
+                    "video_file_name": video_file_name,
+                    "upload_priority": 20,
+                    "duration": duration,
+                    "video_clip_start": 0,
+                }
+            ]
+        }
+        batch_response = self.session.put(batch_url, json=payload)
+        if batch_response.status_code != 200:
+            print(f"Asset registration failed: {batch_response.status_code} - {batch_response.text}")
+            return None
+
+        select_url = f"{self.BASE_API_URL}/frames/{frame_id}/select_asset.json"
+        select_payload = {
+            "assets": [
+                {
+                    "user_id": self.user_id,
+                    "asset_local_identifier": local_identifier,
+                }
+            ]
+        }
+        select_response = self.session.post(select_url, json=select_payload)
+        if select_response.status_code != 200:
+            print(f"Select asset failed: {select_response.status_code} - {select_response.text}")
+            return None
+
+        return select_response.json()
 
     def _get_upload_url(self, frame_id: str) -> Optional[Dict]:
         """
@@ -432,88 +702,9 @@ class AuraManager:
         caption: Optional[str] = None
     ) -> Optional[Dict]:
         """
-        Upload a photo to a frame.
-        
-        NOTE: This is EXPERIMENTAL. The upload API is not documented and may not work.
-        
-        Args:
-            frame_id: The frame to upload to.
-            file_path: Path to the photo file.
-            caption: Optional caption for the photo.
-            
-        Returns:
-            The created asset data, or None on failure.
+        Upload a photo to a frame using the mobile upload flow.
         """
-        if not os.path.isfile(file_path):
-            print(f"Error: File not found: {file_path}")
-            return None
-
-        # Get mime type
-        mime_type, _ = mimetypes.guess_type(file_path)
-        if mime_type is None:
-            mime_type = "image/jpeg"
-
-        # Validate it's an image
-        if not mime_type.startswith("image/"):
-            print(f"Error: {file_path} is not an image (detected: {mime_type})")
-            return None
-
-        print(f"Uploading photo: {os.path.basename(file_path)} (EXPERIMENTAL)")
-
-        # Get upload URL
-        upload_info = self._get_upload_url(frame_id)
-        if not upload_info:
-            return None
-
-        try:
-            # Upload to S3/storage
-            upload_url = upload_info.get("url")
-            upload_fields = upload_info.get("fields", {})
-            
-            if not upload_url:
-                print(f"Error: No upload URL in response. Got: {upload_info}")
-                return None
-            
-            print(f"Uploading to: {upload_url}")
-            
-            with open(file_path, "rb") as f:
-                files = {"file": (os.path.basename(file_path), f, mime_type)}
-                response = requests.post(upload_url, data=upload_fields, files=files)
-
-            if response.status_code not in [200, 201, 204]:
-                print(f"Upload failed: {response.status_code}")
-                print(f"Response: {response.text[:500]}")
-                return None
-
-            # Register the asset with the frame
-            register_url = f"{self.BASE_API_URL}/frames/{frame_id}/assets.json"
-            asset_data = {
-                "asset": {
-                    "file_name": os.path.basename(file_path),
-                    "content_type": mime_type,
-                    "caption": caption,
-                }
-            }
-            
-            if "key" in upload_fields:
-                asset_data["asset"]["remote_path"] = upload_fields["key"]
-
-            print(f"Registering asset at: {register_url}")
-            register_response = self.session.post(register_url, json=asset_data)
-            
-            if register_response.status_code not in [200, 201]:
-                print(f"Asset registration failed: {register_response.status_code}")
-                print(f"Response: {register_response.text[:500]}")
-                return None
-
-            print(f"Successfully uploaded: {os.path.basename(file_path)}")
-            return register_response.json()
-
-        except Exception as e:
-            print(f"Upload error: {e}")
-            import traceback
-            traceback.print_exc()
-            return None
+        return self.upload_photo_mobile(frame_id, file_path, caption=caption)
 
     def upload_video(
         self,
@@ -522,87 +713,9 @@ class AuraManager:
         caption: Optional[str] = None
     ) -> Optional[Dict]:
         """
-        Upload a video to a frame.
-        
-        NOTE: This is EXPERIMENTAL. Video uploads may require:
-        - Different API endpoints than photos
-        - Server-side transcoding
-        - Chunked uploads for large files
-        - Specific codec/format requirements
-        
-        Args:
-            frame_id: The frame to upload to.
-            file_path: Path to the video file.
-            caption: Optional caption for the video.
-            
-        Returns:
-            The created asset data, or None on failure.
+        Upload a video to a frame using the mobile upload flow.
         """
-        if not os.path.isfile(file_path):
-            print(f"Error: File not found: {file_path}")
-            return None
-
-        # Get mime type
-        mime_type, _ = mimetypes.guess_type(file_path)
-        if mime_type is None:
-            mime_type = "video/mp4"
-
-        # Validate it's a video
-        if not mime_type.startswith("video/"):
-            print(f"Error: {file_path} is not a video (detected: {mime_type})")
-            return None
-
-        # Check file size - large videos may need chunked upload
-        file_size = os.path.getsize(file_path)
-        if file_size > 100 * 1024 * 1024:  # 100MB
-            print(f"Warning: Large video ({file_size / 1024 / 1024:.1f}MB) - upload may fail or timeout")
-
-        print(f"Uploading video: {os.path.basename(file_path)} (EXPERIMENTAL)")
-
-        # Get upload URL (videos may use a different endpoint)
-        upload_info = self._get_upload_url(frame_id)
-        if not upload_info:
-            return None
-
-        try:
-            upload_url = upload_info.get("url")
-            upload_fields = upload_info.get("fields", {})
-            
-            # Videos may be larger, so we stream the upload
-            with open(file_path, "rb") as f:
-                files = {"file": (os.path.basename(file_path), f, mime_type)}
-                response = requests.post(upload_url, data=upload_fields, files=files)
-
-            if response.status_code not in [200, 201, 204]:
-                print(f"Upload failed: {response.status_code}")
-                return None
-
-            # Register the video asset
-            register_url = f"{self.BASE_API_URL}/frames/{frame_id}/assets.json"
-            asset_data = {
-                "asset": {
-                    "file_name": os.path.basename(file_path),
-                    "video_file_name": os.path.basename(file_path),
-                    "content_type": mime_type,
-                    "caption": caption,
-                }
-            }
-            
-            if "key" in upload_fields:
-                asset_data["asset"]["remote_path"] = upload_fields["key"]
-
-            register_response = self.session.post(register_url, json=asset_data)
-            
-            if register_response.status_code not in [200, 201]:
-                print(f"Asset registration failed: {register_response.status_code}")
-                return None
-
-            print(f"Successfully uploaded: {os.path.basename(file_path)}")
-            return register_response.json()
-
-        except Exception as e:
-            print(f"Upload error: {e}")
-            return None
+        return self.upload_video_mobile(frame_id, file_path, caption=caption)
 
     def upload_file(
         self,
@@ -935,16 +1048,14 @@ class AuraManager:
             True if deletion was successful, False otherwise.
         """
         print(f"Deleting asset {asset_id} from frame {frame_id}")
-        
-        url = f"{self.BASE_API_URL}/frames/{frame_id}/assets/{asset_id}.json"
+
+        url = f"{self.BASE_API_URL}/assets/{asset_id}.json"
         response = self.session.delete(url)
-        
-        if response.status_code not in [200, 204]:
-            print(f"Delete failed: {response.status_code}")
-            return False
-            
-        print("Asset deleted successfully")
-        return True
+        if response.status_code in [200, 204]:
+            print(f"Asset deleted successfully via {url}")
+            return True
+        print(f"Delete failed at {url}: {response.status_code} - {response.text[:500]}")
+        return False
 
     def get_frame_info(self, frame_id: str) -> Optional[Dict]:
         """

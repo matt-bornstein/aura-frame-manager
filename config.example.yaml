@@ -2,6 +2,13 @@
 base_file_path: images
 debug_file_path: debug
 
+device_identifier: your-device-id-here
+client_device_id: your-device-id-here
+cognito_identity_id: us-east-1:your-cognito-identity-id
+cognito_region: us-east-1
+s3_bucket: images.senseapp.co
+s3_region: us-east-1
+
 accounts:
   - email: your-email@example.com
     password: your-password-here

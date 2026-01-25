@@ -94,6 +94,67 @@ const api = {
         return response.json();
     },
 
+    async uploadFiles(frameId, files, caption = null) {
+        const formData = new FormData();
+        files.forEach(file => formData.append('files', file));
+
+        const params = new URLSearchParams();
+        if (caption) params.set('caption', caption);
+        const query = params.toString() ? `?${params}` : '';
+
+        const response = await fetch(`${this.baseUrl}/frames/${frameId}/upload/batch${query}`, {
+            method: 'POST',
+            body: formData,
+        });
+
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({ detail: 'Upload failed' }));
+            throw new Error(error.detail || `HTTP ${response.status}`);
+        }
+
+        return response.json();
+    },
+
+    uploadFileWithProgress(frameId, file, caption = null, onProgress = null) {
+        const formData = new FormData();
+        formData.append('file', file);
+
+        const params = new URLSearchParams();
+        if (caption) params.set('caption', caption);
+        const query = params.toString() ? `?${params}` : '';
+
+        return new Promise((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', `${this.baseUrl}/frames/${frameId}/upload${query}`);
+            xhr.onload = () => {
+                if (xhr.status >= 200 && xhr.status < 300) {
+                    try {
+                        resolve(xhr.responseText ? JSON.parse(xhr.responseText) : null);
+                    } catch {
+                        resolve(null);
+                    }
+                } else {
+                    try {
+                        const error = JSON.parse(xhr.responseText);
+                        reject(new Error(error.detail || `HTTP ${xhr.status}`));
+                    } catch {
+                        reject(new Error(`HTTP ${xhr.status}`));
+                    }
+                }
+            };
+            xhr.onerror = () => reject(new Error('Upload failed'));
+            if (xhr.upload && onProgress) {
+                xhr.upload.onprogress = (event) => {
+                    if (event.lengthComputable) {
+                        const percent = Math.round((event.loaded / event.total) * 100);
+                        onProgress(percent);
+                    }
+                };
+            }
+            xhr.send(formData);
+        });
+    },
+
     // Sync
     async syncFrames(sourceFrameId, targetFrameId, options = {}) {
         return this.request('/sync', {
@@ -642,6 +703,7 @@ function openUploadModal() {
 function closeUploadModal() {
     elements.uploadModal.classList.remove('open');
     state.selectedFiles = [];
+    elements.fileInput.value = '';
 }
 
 function handleFileSelect(files) {
@@ -680,6 +742,10 @@ function updateUploadPreview() {
             <div class="preview-item-info">
                 <div class="preview-item-name">${file.name}</div>
                 <div class="preview-item-size">${formatFileSize(file.size)}</div>
+                <div class="preview-item-status status-queued">Queued</div>
+                <div class="preview-item-progress">
+                    <div class="preview-item-progress-bar" style="width: 0%;"></div>
+                </div>
             </div>
             <button class="preview-item-remove" data-index="${index}">&times;</button>
         </div>
@@ -702,6 +768,23 @@ function formatFileSize(bytes) {
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
 }
 
+function setPreviewStatus(index, text, statusClass) {
+    const item = elements.previewList.querySelector(`.preview-item[data-index="${index}"]`);
+    if (!item) return;
+    const status = item.querySelector('.preview-item-status');
+    if (!status) return;
+    status.textContent = text;
+    status.className = `preview-item-status ${statusClass}`;
+}
+
+function setPreviewProgress(index, percent) {
+    const item = elements.previewList.querySelector(`.preview-item[data-index="${index}"]`);
+    if (!item) return;
+    const bar = item.querySelector('.preview-item-progress-bar');
+    if (!bar) return;
+    bar.style.width = `${percent}%`;
+}
+
 async function startUpload() {
     if (state.selectedFiles.length === 0 || !state.currentFrameId) return;
 
@@ -712,35 +795,57 @@ async function startUpload() {
     btnLoading.style.display = 'flex';
     elements.startUploadBtn.disabled = true;
     elements.cancelUploadBtn.disabled = true;
+    elements.fileInput.disabled = true;
+    elements.browseFilesBtn.disabled = true;
+    elements.clearFilesBtn.disabled = true;
 
     const caption = elements.uploadCaption.value || null;
     let uploaded = 0;
     let failed = 0;
 
-    for (const file of state.selectedFiles) {
-        try {
-            await api.uploadFile(state.currentFrameId, file, caption);
-            uploaded++;
-        } catch (error) {
-            console.error(`Failed to upload ${file.name}:`, error);
-            failed++;
+    try {
+        for (let i = 0; i < state.selectedFiles.length; i++) {
+            const file = state.selectedFiles[i];
+            setPreviewStatus(i, 'Uploading...', 'status-uploading');
+            try {
+                await api.uploadFileWithProgress(
+                    state.currentFrameId,
+                    file,
+                    caption,
+                    (percent) => setPreviewProgress(i, percent)
+                );
+                setPreviewProgress(i, 100);
+                setPreviewStatus(i, 'Uploaded', 'status-success');
+                uploaded++;
+            } catch (error) {
+                console.error(`Failed to upload ${file.name}:`, error);
+                setPreviewStatus(i, 'Failed', 'status-error');
+                failed++;
+            }
         }
+    } finally {
+        closeUploadModal();
+        await loadAssets();
+        await loadStats();
     }
 
     btnText.style.display = 'inline';
     btnLoading.style.display = 'none';
     elements.startUploadBtn.disabled = false;
     elements.cancelUploadBtn.disabled = false;
+    elements.fileInput.disabled = false;
+    elements.browseFilesBtn.disabled = false;
+    elements.clearFilesBtn.disabled = false;
 
     if (failed === 0) {
         showToast(`Successfully uploaded ${uploaded} file${uploaded > 1 ? 's' : ''}`);
+    } else if (uploaded === 0) {
+        showToast(`Upload failed (${failed} file${failed > 1 ? 's' : ''})`, 'error');
     } else {
-        showToast(`Uploaded ${uploaded}, failed ${failed}`, failed > 0 ? 'warning' : 'success');
+        showToast(`Uploaded ${uploaded}, failed ${failed}`, 'warning');
     }
 
-    closeUploadModal();
-    await loadAssets();
-    await loadStats();
+    // Refresh happens in finally
 }
 
 // =============================================================================

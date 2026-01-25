@@ -707,6 +707,14 @@ body {
     background: var(--color-primary-light);
 }
 
+.btn-primary .btn-text {
+    color: var(--text-inverse);
+}
+
+.btn-primary .btn-loading {
+    color: var(--text-inverse);
+}
+
 .btn-full {
     width: 100%;
 }
@@ -1057,6 +1065,39 @@ select.input {
 .preview-item-size {
     font-size: 12px;
     color: var(--text-secondary);
+}
+
+.preview-item-status {
+    font-size: 12px;
+    margin-top: 4px;
+    color: var(--text-secondary);
+}
+
+.preview-item-status.status-uploading {
+    color: var(--color-warning);
+}
+
+.preview-item-status.status-success {
+    color: var(--color-success);
+}
+
+.preview-item-status.status-error {
+    color: var(--color-danger);
+}
+
+.preview-item-progress {
+    height: 6px;
+    background: var(--bg-tertiary);
+    border-radius: var(--border-radius-full);
+    margin-top: 6px;
+    overflow: hidden;
+}
+
+.preview-item-progress-bar {
+    height: 100%;
+    width: 0;
+    background: var(--color-primary);
+    transition: width var(--transition);
 }
 
 .preview-item-remove {

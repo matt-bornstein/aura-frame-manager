@@ -718,7 +718,7 @@ async def delete_asset(frame_id: str, asset_id: str):
             processed=1,
         )
     else:
-        raise HTTPException(status_code=500, detail="Failed to delete asset")
+        raise HTTPException(status_code=500, detail="Failed to delete asset (see server logs)")
 
 
 # =============================================================================
