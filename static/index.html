@@ -34,39 +34,14 @@
             </nav>
             
             <div class="sidebar-footer">
-                <div class="split-btn-container">
-                    <button class="btn btn-secondary split-btn-main" id="syncAllBtn">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M23 4v6h-6"/>
-                            <path d="M1 20v-6h6"/>
-                            <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
-                        </svg>
-                        Sync All Frames
-                    </button>
-                    <button class="btn btn-secondary split-btn-toggle" id="syncAllDropdownBtn">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <polyline points="6 9 12 15 18 9"/>
-                        </svg>
-                    </button>
-                    <div class="split-btn-dropdown" id="syncAllDropdown">
-                        <button class="split-btn-option" id="syncAllNormalBtn">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <path d="M23 4v6h-6"/>
-                                <path d="M1 20v-6h6"/>
-                                <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
-                            </svg>
-                            Sync All Frames
-                        </button>
-                        <button class="split-btn-option" id="syncAllDryRunBtn">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <circle cx="12" cy="12" r="10"/>
-                                <path d="M12 16v-4"/>
-                                <path d="M12 8h.01"/>
-                            </svg>
-                            Sync All (Dry Run)
-                        </button>
-                    </div>
-                </div>
+                <button class="btn btn-secondary btn-full" id="syncFramesBtn">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M23 4v6h-6"/>
+                        <path d="M1 20v-6h6"/>
+                        <path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/>
+                    </svg>
+                    Sync frames...
+                </button>
                 <div class="health-status" id="healthStatus">
                     <span class="status-dot"></span>
                     <span class="status-text">Checking...</span>
@@ -210,7 +185,7 @@
     <!-- Upload Modal -->
     <div class="modal" id="uploadModal">
         <div class="modal-backdrop"></div>
-        <div class="modal-content">
+        <div class="modal-content modal-wide">
             <div class="modal-header">
                 <h3>Upload Files</h3>
                 <button class="modal-close" id="closeUploadModal">&times;</button>
@@ -255,43 +230,35 @@
     <!-- Sync Modal -->
     <div class="modal" id="syncModal">
         <div class="modal-backdrop"></div>
-        <div class="modal-content">
+        <div class="modal-content modal-wide">
             <div class="modal-header">
                 <h3>Sync Frames</h3>
                 <button class="modal-close" id="closeSyncModal">&times;</button>
             </div>
             <div class="modal-body">
-                <p class="modal-description">Synchronize content between frames. Assets from the source frame will be copied to the target frame.</p>
+                <p class="modal-description">Select two or more frames to synchronize their content.</p>
                 
                 <div class="form-group">
-                    <label class="input-label">Source Frame</label>
-                    <select class="input" id="syncSourceFrame"></select>
-                </div>
-                
-                <div class="form-group">
-                    <label class="input-label">Target Frame</label>
-                    <select class="input" id="syncTargetFrame"></select>
+                    <label class="input-label">Frames</label>
+                    <div class="sync-frame-list" id="syncFrameList"></div>
                 </div>
                 
                 <div class="form-group">
                     <label class="checkbox-label">
-                        <input type="checkbox" id="syncPhotosOnly">
-                        <span>Photos only</span>
-                    </label>
-                    <label class="checkbox-label">
-                        <input type="checkbox" id="syncVideosOnly">
-                        <span>Videos only</span>
-                    </label>
-                    <label class="checkbox-label">
-                        <input type="checkbox" id="syncDryRun">
+                        <input type="checkbox" id="syncDryRun" disabled>
                         <span>Dry run (preview only)</span>
                     </label>
                 </div>
+
+                <div class="form-group">
+                    <label class="input-label">Output</label>
+                    <textarea class="sync-output" id="syncOutput" readonly></textarea>
+                </div>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-secondary" id="cancelSyncBtn">Cancel</button>
-                <button class="btn btn-primary" id="startSyncBtn">
-                    <span class="btn-text">Start Sync</span>
+                <button class="btn btn-secondary" id="cancelSyncBtn">Close</button>
+                <button class="btn btn-primary" id="syncOnceBtn" disabled>
+                    <span class="btn-text">Sync once</span>
                     <span class="btn-loading" style="display: none;">
                         <div class="spinner-small"></div>
                         Syncing...

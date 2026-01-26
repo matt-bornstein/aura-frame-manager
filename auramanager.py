@@ -892,6 +892,153 @@ class AuraManager:
         print(f"\nSync complete: {synced} synced, {skipped} skipped")
         return synced, skipped
 
+    def sync_frames_detailed(
+        self,
+        source_frame_id: str,
+        target_frame_id: str,
+        photos_only: bool = False,
+        videos_only: bool = False,
+        dry_run: bool = False,
+        source_label: Optional[str] = None,
+        target_label: Optional[str] = None,
+    ) -> Tuple[int, int, List[str]]:
+        """
+        Synchronize assets from source frame to target frame with detailed output.
+        
+        Returns:
+            Tuple of (synced_count, skipped_count, output_lines).
+        """
+        source_label = source_label or source_frame_id
+        target_label = target_label or target_frame_id
+
+        lines: List[str] = []
+        lines.append(f"Source: {source_label} ({source_frame_id})")
+        lines.append(f"Target: {target_label} ({target_frame_id})")
+        lines.append(f"Dry run: {'yes' if dry_run else 'no'}")
+
+        source_assets = self.list_assets(source_frame_id)
+        target_assets = self.list_assets(target_frame_id)
+
+        target_ids = {a.id for a in target_assets}
+        to_sync = []
+        for asset in source_assets:
+            if asset.id in target_ids:
+                continue
+            if photos_only and asset.is_video:
+                continue
+            if videos_only and not asset.is_video:
+                continue
+            to_sync.append(asset)
+
+        lines.append(f"Assets to sync: {len(to_sync)}")
+
+        def get_display_name(asset: Asset) -> str:
+            if asset.is_video and asset.video_file_name:
+                return asset.video_file_name
+            return asset.file_name
+
+        if dry_run:
+            for asset in to_sync:
+                asset_type = "video" if asset.is_video else "photo"
+                display_name = get_display_name(asset)
+                lines.append(
+                    f"Would sync: {display_name} ({asset.id}, {asset_type}) from {source_label} -> {target_label}"
+                )
+            lines.append("Dry run complete")
+            return len(to_sync), 0, lines
+
+        output_dir = os.path.join(self.base_file_path, source_frame_id)
+        pathlib.Path(output_dir).mkdir(parents=True, exist_ok=True)
+
+        synced = 0
+        skipped = 0
+
+        for asset in to_sync:
+            display_name = get_display_name(asset)
+            lines.append(f"Downloading: {display_name} ({asset.id})")
+
+            local_path = self.download_asset(asset, output_dir)
+            if not local_path:
+                lines.append(f"Download failed: {display_name} ({asset.id})")
+                skipped += 1
+                continue
+
+            lines.append(f"Downloaded: {display_name}")
+            lines.append(f"Uploading: {display_name} ({asset.id})")
+
+            result = self.upload_file(target_frame_id, local_path)
+            if result:
+                synced += 1
+                lines.append(f"Uploaded: {display_name}")
+            else:
+                skipped += 1
+                lines.append(f"Upload failed: {display_name} ({asset.id})")
+
+            time.sleep(2)
+
+        lines.append(f"Sync complete: {synced} synced, {skipped} skipped")
+        return synced, skipped, lines
+
+    def sync_selected_frames(
+        self,
+        frame_ids: List[str],
+        dry_run: bool = False,
+        photos_only: bool = False,
+        videos_only: bool = False,
+    ) -> Tuple[int, int, List[str]]:
+        """
+        Synchronize assets across a selected set of frames.
+
+        Returns:
+            Tuple of (total_synced, total_skipped, output_lines).
+        """
+        unique_frame_ids = list(dict.fromkeys(frame_ids))
+        if len(unique_frame_ids) < 2:
+            raise ValueError("Select at least two frames to sync")
+
+        frame_name_map = {
+            frame["frame_id"]: frame.get("name", frame["frame_id"])
+            for frame in self.config["frames"]
+        }
+        missing = [frame_id for frame_id in unique_frame_ids if frame_id not in frame_name_map]
+        if missing:
+            raise ValueError(f"Unknown frame IDs: {', '.join(missing)}")
+
+        lines: List[str] = []
+        lines.append(f"{'Dry run' if dry_run else 'Sync'} across {len(unique_frame_ids)} frames")
+
+        total_synced = 0
+        total_skipped = 0
+
+        for source_id in unique_frame_ids:
+            for target_id in unique_frame_ids:
+                if source_id == target_id:
+                    continue
+
+                source_label = frame_name_map[source_id]
+                target_label = frame_name_map[target_id]
+                lines.append("")
+                lines.append("=" * 60)
+                lines.append(f"{source_label} -> {target_label}")
+                lines.append("=" * 60)
+
+                synced, skipped, pair_lines = self.sync_frames_detailed(
+                    source_id,
+                    target_id,
+                    photos_only=photos_only,
+                    videos_only=videos_only,
+                    dry_run=dry_run,
+                    source_label=source_label,
+                    target_label=target_label,
+                )
+                total_synced += synced
+                total_skipped += skipped
+                lines.extend(pair_lines)
+
+        lines.append("")
+        lines.append(f"Summary: {total_synced} synced, {total_skipped} skipped")
+        return total_synced, total_skipped, lines
+
     def sync_all_frames(
         self,
         photos_only: bool = False,

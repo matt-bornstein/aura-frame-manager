@@ -113,6 +113,22 @@ class SyncRequest(BaseModel):
     dry_run: bool = False
 
 
+class SyncSelectedRequest(BaseModel):
+    """Request model for syncing a selected set of frames."""
+    frame_ids: List[str] = Field(..., min_items=2)
+    dry_run: bool = False
+
+
+class SyncSelectedResponse(BaseModel):
+    """Response model for selected frame sync with detailed output."""
+    success: bool
+    message: str
+    dry_run: bool
+    total_synced: int = 0
+    total_skipped: int = 0
+    lines: List[str] = []
+
+
 class UploadRequest(BaseModel):
     """Request model for upload configuration."""
     caption: Optional[str] = None
@@ -620,6 +636,33 @@ async def sync_frames(request: SyncRequest):
             processed=synced,
             skipped=skipped,
         )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/sync/selected", response_model=SyncSelectedResponse, tags=["Sync"])
+async def sync_selected_frames(request: SyncSelectedRequest):
+    """Synchronize assets across a selected list of frames."""
+    manager = get_aura()
+
+    try:
+        total_synced, total_skipped, lines = manager.sync_selected_frames(
+            request.frame_ids,
+            dry_run=request.dry_run,
+        )
+        frame_count = len(set(request.frame_ids))
+        action = "Dry run" if request.dry_run else "Synced"
+        message = f"{action} {total_synced} assets across {frame_count} frames"
+        return SyncSelectedResponse(
+            success=True,
+            message=message,
+            dry_run=request.dry_run,
+            total_synced=total_synced,
+            total_skipped=total_skipped,
+            lines=lines,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

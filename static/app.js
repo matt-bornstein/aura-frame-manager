@@ -169,13 +169,14 @@ const api = {
         });
     },
 
-    async syncAllFrames(options = {}) {
-        const params = new URLSearchParams();
-        if (options.photosOnly) params.set('photos_only', 'true');
-        if (options.videosOnly) params.set('videos_only', 'true');
-        if (options.dryRun) params.set('dry_run', 'true');
-        const query = params.toString() ? `?${params}` : '';
-        return this.request(`/sync/all${query}`, { method: 'POST' });
+    async syncSelectedFrames(frameIds, options = {}) {
+        return this.request('/sync/selected', {
+            method: 'POST',
+            body: JSON.stringify({
+                frame_ids: frameIds,
+                dry_run: options.dryRun || false,
+            }),
+        });
     },
 
     // Metadata
@@ -252,11 +253,7 @@ const api = {
 const elements = {
     // Sidebar
     frameList: document.getElementById('frameList'),
-    syncAllBtn: document.getElementById('syncAllBtn'),
-    syncAllDropdownBtn: document.getElementById('syncAllDropdownBtn'),
-    syncAllDropdown: document.getElementById('syncAllDropdown'),
-    syncAllNormalBtn: document.getElementById('syncAllNormalBtn'),
-    syncAllDryRunBtn: document.getElementById('syncAllDryRunBtn'),
+    syncFramesBtn: document.getElementById('syncFramesBtn'),
     healthStatus: document.getElementById('healthStatus'),
 
     // Header
@@ -304,14 +301,12 @@ const elements = {
 
     // Sync Modal
     syncModal: document.getElementById('syncModal'),
-    syncSourceFrame: document.getElementById('syncSourceFrame'),
-    syncTargetFrame: document.getElementById('syncTargetFrame'),
-    syncPhotosOnly: document.getElementById('syncPhotosOnly'),
-    syncVideosOnly: document.getElementById('syncVideosOnly'),
+    syncFrameList: document.getElementById('syncFrameList'),
     syncDryRun: document.getElementById('syncDryRun'),
     closeSyncModal: document.getElementById('closeSyncModal'),
     cancelSyncBtn: document.getElementById('cancelSyncBtn'),
-    startSyncBtn: document.getElementById('startSyncBtn'),
+    syncOnceBtn: document.getElementById('syncOnceBtn'),
+    syncOutput: document.getElementById('syncOutput'),
 
     // Asset Modal
     assetModal: document.getElementById('assetModal'),
@@ -853,19 +848,10 @@ async function startUpload() {
 // =============================================================================
 
 function openSyncModal() {
-    // Populate frame selects
-    const options = state.frames.map(f => 
-        `<option value="${f.frame_id}">${f.name}</option>`
-    ).join('');
-    
-    elements.syncSourceFrame.innerHTML = options;
-    elements.syncTargetFrame.innerHTML = options;
-    
-    // Reset checkboxes
-    elements.syncPhotosOnly.checked = false;
-    elements.syncVideosOnly.checked = false;
+    renderSyncFrameList();
     elements.syncDryRun.checked = false;
-
+    elements.syncOutput.value = '';
+    updateSyncControls();
     elements.syncModal.classList.add('open');
 }
 
@@ -873,65 +859,88 @@ function closeSyncModal() {
     elements.syncModal.classList.remove('open');
 }
 
-async function startSync() {
-    const sourceId = elements.syncSourceFrame.value;
-    const targetId = elements.syncTargetFrame.value;
+function renderSyncFrameList() {
+    elements.syncFrameList.innerHTML = state.frames.map(frame => `
+        <label class="checkbox-label sync-frame-item">
+            <input type="checkbox" data-frame-id="${frame.frame_id}">
+            <span>${frame.name}</span>
+        </label>
+    `).join('');
 
-    if (sourceId === targetId) {
-        showToast('Source and target frames must be different', 'warning');
+    elements.syncFrameList.querySelectorAll('input[type="checkbox"]').forEach(input => {
+        input.addEventListener('change', updateSyncControls);
+    });
+}
+
+function getSelectedSyncFrameIds() {
+    return Array.from(
+        elements.syncFrameList.querySelectorAll('input[type="checkbox"]:checked')
+    ).map(input => input.dataset.frameId);
+}
+
+function updateSyncControls() {
+    const selectedCount = getSelectedSyncFrameIds().length;
+    const enabled = selectedCount >= 2;
+    elements.syncDryRun.disabled = !enabled;
+    elements.syncOnceBtn.disabled = !enabled;
+    if (!enabled) {
+        elements.syncDryRun.checked = false;
+    }
+}
+
+function setSyncOutput(lines) {
+    elements.syncOutput.value = lines.join('\n');
+    elements.syncOutput.scrollTop = elements.syncOutput.scrollHeight;
+}
+
+function setSyncInputsDisabled(disabled) {
+    elements.syncFrameList.querySelectorAll('input[type="checkbox"]').forEach(input => {
+        input.disabled = disabled;
+    });
+    elements.syncDryRun.disabled = disabled;
+    elements.syncOnceBtn.disabled = disabled;
+}
+
+async function startSync() {
+    const selectedIds = getSelectedSyncFrameIds();
+    if (selectedIds.length < 2) {
         return;
     }
 
-    const btnText = elements.startSyncBtn.querySelector('.btn-text');
-    const btnLoading = elements.startSyncBtn.querySelector('.btn-loading');
-    
+    const btnText = elements.syncOnceBtn.querySelector('.btn-text');
+    const btnLoading = elements.syncOnceBtn.querySelector('.btn-loading');
+    const dryRun = elements.syncDryRun.checked;
+
     btnText.style.display = 'none';
     btnLoading.style.display = 'flex';
-    elements.startSyncBtn.disabled = true;
+    setSyncInputsDisabled(true);
+
+    setSyncOutput([
+        `${dryRun ? 'Dry run' : 'Sync'} started...`,
+        `Frames: ${selectedIds.join(', ')}`,
+        '',
+        'Waiting for results...'
+    ]);
 
     try {
-        const result = await api.syncFrames(sourceId, targetId, {
-            photosOnly: elements.syncPhotosOnly.checked,
-            videosOnly: elements.syncVideosOnly.checked,
-            dryRun: elements.syncDryRun.checked,
-        });
-
+        const result = await api.syncSelectedFrames(selectedIds, { dryRun });
+        const lines = Array.isArray(result.lines) ? result.lines : [result.message];
+        setSyncOutput(lines);
         showToast(result.message);
-        closeSyncModal();
-        
-        if (!elements.syncDryRun.checked && state.currentFrameId === targetId) {
+
+        if (!dryRun && state.currentFrameId && selectedIds.includes(state.currentFrameId)) {
             await loadAssets();
             await loadStats();
         }
     } catch (error) {
         console.error('Sync failed:', error);
+        setSyncOutput([`Sync failed: ${error.message}`]);
         showToast('Sync failed: ' + error.message, 'error');
     } finally {
         btnText.style.display = 'inline';
         btnLoading.style.display = 'none';
-        elements.startSyncBtn.disabled = false;
-    }
-}
-
-async function syncAllFrames(dryRun = false) {
-    const action = dryRun ? 'preview sync of' : 'sync';
-    if (!confirm(`This will ${action} all frames with each other. Continue?`)) {
-        return;
-    }
-
-    try {
-        const message = dryRun ? 'Running dry run...' : 'Starting sync of all frames...';
-        showToast(message, 'success');
-        const result = await api.syncAllFrames({ dryRun });
-        showToast(result.message);
-        
-        if (!dryRun && state.currentFrameId) {
-            await loadAssets();
-            await loadStats();
-        }
-    } catch (error) {
-        console.error('Sync all failed:', error);
-        showToast('Sync failed: ' + error.message, 'error');
+        setSyncInputsDisabled(false);
+        updateSyncControls();
     }
 }
 
@@ -1060,27 +1069,8 @@ function initEventListeners() {
     elements.fitAllBtn.addEventListener('click', fitAllAssets);
     elements.uploadBtn.addEventListener('click', openUploadModal);
     
-    // Sync All split button
-    elements.syncAllBtn.addEventListener('click', () => syncAllFrames(false));
-    elements.syncAllDropdownBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        elements.syncAllDropdown.classList.toggle('open');
-    });
-    elements.syncAllNormalBtn.addEventListener('click', () => {
-        elements.syncAllDropdown.classList.remove('open');
-        syncAllFrames(false);
-    });
-    elements.syncAllDryRunBtn.addEventListener('click', () => {
-        elements.syncAllDropdown.classList.remove('open');
-        syncAllFrames(true);
-    });
-    
-    // Close dropdown when clicking outside
-    document.addEventListener('click', (e) => {
-        if (!e.target.closest('.split-btn-container')) {
-            elements.syncAllDropdown.classList.remove('open');
-        }
-    });
+    // Sync frames button
+    elements.syncFramesBtn.addEventListener('click', openSyncModal);
 
     // Filter buttons
     document.querySelectorAll('.filter-btn').forEach(btn => {
@@ -1136,7 +1126,7 @@ function initEventListeners() {
     // Sync modal
     elements.closeSyncModal.addEventListener('click', closeSyncModal);
     elements.cancelSyncBtn.addEventListener('click', closeSyncModal);
-    elements.startSyncBtn.addEventListener('click', startSync);
+    elements.syncOnceBtn.addEventListener('click', startSync);
 
     // Asset modal
     elements.closeAssetModal.addEventListener('click', closeAssetModal);
