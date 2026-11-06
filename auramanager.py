@@ -15,11 +15,13 @@ import pathlib
 import mimetypes
 import tempfile
 import uuid
+import hashlib
 from datetime import datetime, timezone, timedelta
 from typing import Optional, List, Dict, Any, Tuple
 from dataclasses import dataclass
 import boto3
 from PIL import Image, ExifTags
+import imagehash
 import cv2
 
 
@@ -114,6 +116,98 @@ class AuraManager:
         """Load configuration from YAML file."""
         with open(config_path, "r") as config_file:
             return yaml.safe_load(config_file)
+
+    @staticmethod
+    def _perceptual_hash(file_path: str, is_video: bool = False) -> str:
+        """
+        Compute a perceptual hash for an image or video file.
+
+        For images, uses imagehash (average_hash) on the pixel content,
+        which is robust against re-encoding, metadata changes, and minor
+        quality differences.
+
+        For videos, extracts a frame at the 1-second mark (or the first
+        frame) using OpenCV and hashes that.
+
+        Returns:
+            Hex string of the perceptual hash.
+        """
+        if is_video:
+            cap = cv2.VideoCapture(file_path)
+            try:
+                fps = cap.get(cv2.CAP_PROP_FPS) or 30
+                # Seek to 1 second in (or frame 0 if very short)
+                cap.set(cv2.CAP_PROP_POS_FRAMES, min(int(fps), int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 1) - 1))
+                ret, frame = cap.read()
+                if not ret:
+                    # Fall back to first frame
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    ret, frame = cap.read()
+                if not ret:
+                    # Last resort: MD5 of the raw file
+                    h = hashlib.md5()
+                    with open(file_path, "rb") as f:
+                        for chunk in iter(lambda: f.read(8192), b""):
+                            h.update(chunk)
+                    return h.hexdigest()
+                # Convert BGR → RGB and wrap in PIL Image
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                img = Image.fromarray(frame_rgb)
+            finally:
+                cap.release()
+        else:
+            img = Image.open(file_path)
+
+        return str(imagehash.average_hash(img))
+
+    def _download_assets_and_hash(
+        self,
+        frame_id: str,
+        assets: List["Asset"],
+    ) -> Dict[str, Tuple["Asset", str]]:
+        """
+        Download all assets for a frame and compute perceptual hashes.
+
+        Uses the standard download_asset() which skips already-cached files.
+        Images are hashed with imagehash (perceptual); videos hash a
+        representative frame extracted with OpenCV.
+
+        Args:
+            frame_id: The frame these assets belong to.
+            assets: List of Asset objects to download.
+
+        Returns:
+            Dict mapping perceptual hash string -> (Asset, local_file_path).
+            If two assets produce the same hash only the first is kept.
+        """
+        output_dir = os.path.join(self.base_file_path, frame_id)
+        pathlib.Path(output_dir).mkdir(parents=True, exist_ok=True)
+
+        hash_map: Dict[str, Tuple[Asset, str]] = {}
+        for i, asset in enumerate(assets, 1):
+            asset_type = "video" if asset.is_video else "photo"
+            filename = f"{asset.id}{asset.extension}"
+            file_path = os.path.join(output_dir, filename)
+
+            if os.path.isfile(file_path) and os.path.getsize(file_path) > 0:
+                print(f"  [{i}/{len(assets)}] Cached {asset_type}: {asset.id}")
+            else:
+                print(f"  [{i}/{len(assets)}] Downloading {asset_type}: {asset.id}...")
+                file_path = self.download_asset(asset, output_dir)
+                if not file_path or not os.path.isfile(file_path) or os.path.getsize(file_path) == 0:
+                    print(f"  Failed to download {asset.id}, skipping")
+                    continue
+
+            try:
+                phash = self._perceptual_hash(file_path, is_video=asset.is_video)
+            except Exception as e:
+                print(f"  Warning: could not hash {asset.id}: {e}")
+                continue
+
+            if phash not in hash_map:
+                hash_map[phash] = (asset, file_path)
+
+        return hash_map
 
     # =========================================================================
     # AUTHENTICATION
@@ -812,18 +906,62 @@ class AuraManager:
     # ASSET SYNCHRONIZATION (BETWEEN FRAMES)
     # =========================================================================
 
+    def _prepare_frame_hashes(
+        self,
+        frame_ids: List[str],
+        photos_only: bool = False,
+        videos_only: bool = False,
+    ) -> Tuple[Dict[str, List["Asset"]], Dict[str, Dict[str, Tuple["Asset", str]]]]:
+        """
+        List and download+hash assets for multiple frames in one pass.
+
+        Each frame's assets are listed once, downloaded once, and hashed once.
+
+        Args:
+            frame_ids: List of frame IDs to prepare.
+            photos_only: If True, only include photos.
+            videos_only: If True, only include videos.
+
+        Returns:
+            Tuple of (asset_lists, hash_maps) where:
+            - asset_lists maps frame_id -> filtered List[Asset]
+            - hash_maps maps frame_id -> (hash -> (Asset, local_path))
+        """
+        asset_lists: Dict[str, List[Asset]] = {}
+        hash_maps: Dict[str, Dict[str, Tuple[Asset, str]]] = {}
+
+        for frame_id in frame_ids:
+            print(f"\nPreparing frame {frame_id}...")
+            assets = self.list_assets(frame_id)
+
+            # Apply type filters
+            if photos_only:
+                assets = [a for a in assets if not a.is_video]
+            elif videos_only:
+                assets = [a for a in assets if a.is_video]
+
+            asset_lists[frame_id] = assets
+
+            print(f"Downloading and hashing {len(assets)} assets...")
+            hash_maps[frame_id] = self._download_assets_and_hash(frame_id, assets)
+
+        return asset_lists, hash_maps
+
     def sync_frames(
         self,
         source_frame_id: str,
         target_frame_id: str,
         photos_only: bool = False,
         videos_only: bool = False,
-        dry_run: bool = False
+        dry_run: bool = False,
+        _precomputed_assets: Optional[Dict[str, List["Asset"]]] = None,
+        _precomputed_hashes: Optional[Dict[str, Dict[str, Tuple["Asset", str]]]] = None,
     ) -> Tuple[int, int]:
         """
         Synchronize assets from source frame to target frame.
         
-        Copies assets that exist on source but not on target.
+        Downloads all assets from both frames, computes perceptual hashes, and
+        uploads source assets whose content is not already on the target.
         
         Args:
             source_frame_id: Frame to copy from.
@@ -831,56 +969,62 @@ class AuraManager:
             photos_only: If True, only sync photos.
             videos_only: If True, only sync videos.
             dry_run: If True, only report what would be synced.
+            _precomputed_assets: Optional pre-listed assets (avoids redundant API calls).
+            _precomputed_hashes: Optional pre-computed hash maps (avoids redundant downloads).
             
         Returns:
             Tuple of (synced_count, skipped_count).
         """
         print(f"Syncing from {source_frame_id} to {target_frame_id}...")
-        
-        source_assets = self.list_assets(source_frame_id)
-        target_assets = self.list_assets(target_frame_id)
-        
-        # Create set of target asset IDs for fast lookup
-        target_ids = {a.id for a in target_assets}
-        
-        # Find assets to sync
-        to_sync = []
-        for asset in source_assets:
-            if asset.id in target_ids:
-                continue
-            if photos_only and asset.is_video:
-                continue
-            if videos_only and not asset.is_video:
-                continue
-            to_sync.append(asset)
 
-        print(f"Found {len(to_sync)} assets to sync")
-        
+        if _precomputed_hashes and source_frame_id in _precomputed_hashes and target_frame_id in _precomputed_hashes:
+            source_hashes = _precomputed_hashes[source_frame_id]
+            target_hashes = _precomputed_hashes[target_frame_id]
+            source_assets = (_precomputed_assets or {}).get(source_frame_id, [])
+            target_assets = (_precomputed_assets or {}).get(target_frame_id, [])
+        else:
+            # List assets on both frames
+            source_assets = self.list_assets(source_frame_id)
+            target_assets = self.list_assets(target_frame_id)
+
+            # Apply type filters
+            if photos_only:
+                source_assets = [a for a in source_assets if not a.is_video]
+                target_assets = [a for a in target_assets if not a.is_video]
+            elif videos_only:
+                source_assets = [a for a in source_assets if a.is_video]
+                target_assets = [a for a in target_assets if a.is_video]
+
+            # Download all assets from both frames (uses cache for already-downloaded files)
+            print(f"\nDownloading source assets ({source_frame_id})...")
+            source_hashes = self._download_assets_and_hash(source_frame_id, source_assets)
+
+            print(f"\nDownloading target assets ({target_frame_id})...")
+            target_hashes = self._download_assets_and_hash(target_frame_id, target_assets)
+
+        # Find source hashes that are missing from the target
+        target_hash_set = set(target_hashes.keys())
+        to_sync = [
+            (h, asset, path)
+            for h, (asset, path) in source_hashes.items()
+            if h not in target_hash_set
+        ]
+
+        print(f"\nFound {len(to_sync)} assets to sync (by content hash)")
+
         if dry_run:
-            for asset in to_sync:
+            for h, asset, _ in to_sync:
                 asset_type = "video" if asset.is_video else "photo"
-                print(f"  Would sync: {asset.id} ({asset_type}) from {source_frame_id} -> {target_frame_id}")
+                print(f"  Would sync: {asset.id} ({asset_type}, hash={h}) from {source_frame_id} -> {target_frame_id}")
             return len(to_sync), 0
-
-        # Download to the normal images directory (uses cache if already downloaded)
-        output_dir = os.path.join(self.base_file_path, source_frame_id)
-        pathlib.Path(output_dir).mkdir(parents=True, exist_ok=True)
 
         synced = 0
         skipped = 0
 
-        for i, asset in enumerate(to_sync, 1):
+        for i, (h, asset, local_path) in enumerate(to_sync, 1):
             asset_type = "video" if asset.is_video else "photo"
-            print(f"[{i}/{len(to_sync)}] Syncing {asset_type}: {asset.id}")
+            print(f"[{i}/{len(to_sync)}] Syncing {asset_type}: {asset.id} (hash={h})")
 
-            # Download from source (will use cache if already exists)
-            local_path = self.download_asset(asset, output_dir)
-            if not local_path:
-                print(f"  Failed to download")
-                skipped += 1
-                continue
-
-            # Upload to target
             result = self.upload_file(target_frame_id, local_path)
             if result:
                 synced += 1
@@ -901,12 +1045,21 @@ class AuraManager:
         dry_run: bool = False,
         source_label: Optional[str] = None,
         target_label: Optional[str] = None,
-    ) -> Tuple[int, int, List[str]]:
+        _precomputed_assets: Optional[Dict[str, List["Asset"]]] = None,
+        _precomputed_hashes: Optional[Dict[str, Dict[str, Tuple["Asset", str]]]] = None,
+    ) -> Tuple[int, int, List[str], Dict[str, Any]]:
         """
         Synchronize assets from source frame to target frame with detailed output.
+
+        Downloads all assets from both frames, computes perceptual hashes, and
+        uploads source assets whose content is not already on the target.
+
+        If _precomputed_assets and _precomputed_hashes are provided, the
+        expensive list/download/hash steps are skipped (already done).
         
         Returns:
-            Tuple of (synced_count, skipped_count, output_lines).
+            Tuple of (synced_count, skipped_count, output_lines, pair_summary).
+            pair_summary contains structured info for this pair.
         """
         source_label = source_label or source_frame_id
         target_label = target_label or target_frame_id
@@ -916,21 +1069,40 @@ class AuraManager:
         lines.append(f"Target: {target_label} ({target_frame_id})")
         lines.append(f"Dry run: {'yes' if dry_run else 'no'}")
 
-        source_assets = self.list_assets(source_frame_id)
-        target_assets = self.list_assets(target_frame_id)
+        if _precomputed_hashes and source_frame_id in _precomputed_hashes and target_frame_id in _precomputed_hashes:
+            source_hashes = _precomputed_hashes[source_frame_id]
+            target_hashes = _precomputed_hashes[target_frame_id]
+            source_assets = (_precomputed_assets or {}).get(source_frame_id, [])
+            target_assets = (_precomputed_assets or {}).get(target_frame_id, [])
+        else:
+            # List assets on both frames
+            source_assets = self.list_assets(source_frame_id)
+            target_assets = self.list_assets(target_frame_id)
 
-        target_ids = {a.id for a in target_assets}
-        to_sync = []
-        for asset in source_assets:
-            if asset.id in target_ids:
-                continue
-            if photos_only and asset.is_video:
-                continue
-            if videos_only and not asset.is_video:
-                continue
-            to_sync.append(asset)
+            # Apply type filters
+            if photos_only:
+                source_assets = [a for a in source_assets if not a.is_video]
+                target_assets = [a for a in target_assets if not a.is_video]
+            elif videos_only:
+                source_assets = [a for a in source_assets if a.is_video]
+                target_assets = [a for a in target_assets if a.is_video]
 
-        lines.append(f"Assets to sync: {len(to_sync)}")
+            # Download all assets from both frames and compute perceptual hashes
+            lines.append(f"Downloading source assets ({source_label})...")
+            source_hashes = self._download_assets_and_hash(source_frame_id, source_assets)
+
+            lines.append(f"Downloading target assets ({target_label})...")
+            target_hashes = self._download_assets_and_hash(target_frame_id, target_assets)
+
+        # Find source hashes that are missing from the target
+        target_hash_set = set(target_hashes.keys())
+        to_sync = [
+            (h, asset, path)
+            for h, (asset, path) in source_hashes.items()
+            if h not in target_hash_set
+        ]
+
+        lines.append(f"Assets to sync: {len(to_sync)} (by content hash)")
 
         def get_display_name(asset: Asset) -> str:
             if asset.is_video and asset.video_file_name:
@@ -938,33 +1110,30 @@ class AuraManager:
             return asset.file_name
 
         if dry_run:
-            for asset in to_sync:
+            for h, asset, _ in to_sync:
                 asset_type = "video" if asset.is_video else "photo"
                 display_name = get_display_name(asset)
                 lines.append(
-                    f"Would sync: {display_name} ({asset.id}, {asset_type}) from {source_label} -> {target_label}"
+                    f"Would sync: {display_name} ({asset.id}, {asset_type}, hash={h}) "
+                    f"from {source_label} -> {target_label}"
                 )
             lines.append("Dry run complete")
-            return len(to_sync), 0, lines
-
-        output_dir = os.path.join(self.base_file_path, source_frame_id)
-        pathlib.Path(output_dir).mkdir(parents=True, exist_ok=True)
+            pair_summary = {
+                "source_label": source_label,
+                "target_label": target_label,
+                "source_assets": len(source_assets),
+                "target_assets": len(target_assets),
+                "transferred": len(to_sync),
+                "failed": 0,
+            }
+            return len(to_sync), 0, lines, pair_summary
 
         synced = 0
         skipped = 0
 
-        for asset in to_sync:
+        for h, asset, local_path in to_sync:
             display_name = get_display_name(asset)
-            lines.append(f"Downloading: {display_name} ({asset.id})")
-
-            local_path = self.download_asset(asset, output_dir)
-            if not local_path:
-                lines.append(f"Download failed: {display_name} ({asset.id})")
-                skipped += 1
-                continue
-
-            lines.append(f"Downloaded: {display_name}")
-            lines.append(f"Uploading: {display_name} ({asset.id})")
+            lines.append(f"Uploading: {display_name} ({asset.id}, hash={h})")
 
             result = self.upload_file(target_frame_id, local_path)
             if result:
@@ -977,7 +1146,15 @@ class AuraManager:
             time.sleep(2)
 
         lines.append(f"Sync complete: {synced} synced, {skipped} skipped")
-        return synced, skipped, lines
+        pair_summary = {
+            "source_label": source_label,
+            "target_label": target_label,
+            "source_assets": len(source_assets),
+            "target_assets": len(target_assets),
+            "transferred": synced,
+            "failed": skipped,
+        }
+        return synced, skipped, lines, pair_summary
 
     def sync_selected_frames(
         self,
@@ -985,12 +1162,16 @@ class AuraManager:
         dry_run: bool = False,
         photos_only: bool = False,
         videos_only: bool = False,
-    ) -> Tuple[int, int, List[str]]:
+    ) -> Tuple[int, int, List[str], List[Dict[str, Any]]]:
         """
         Synchronize assets across a selected set of frames.
 
+        Lists and hashes all frames once upfront, then compares pairs
+        using the cached data.
+
         Returns:
-            Tuple of (total_synced, total_skipped, output_lines).
+            Tuple of (total_synced, total_skipped, output_lines, pair_summaries).
+            pair_summaries is a list of dicts with per-pair summary info.
         """
         unique_frame_ids = list(dict.fromkeys(frame_ids))
         if len(unique_frame_ids) < 2:
@@ -1007,8 +1188,20 @@ class AuraManager:
         lines: List[str] = []
         lines.append(f"{'Dry run' if dry_run else 'Sync'} across {len(unique_frame_ids)} frames")
 
+        # List + download + hash every frame exactly once
+        lines.append("Preparing frames (listing, downloading, hashing)...")
+        asset_lists, hash_maps = self._prepare_frame_hashes(
+            unique_frame_ids,
+            photos_only=photos_only,
+            videos_only=videos_only,
+        )
+        for fid in unique_frame_ids:
+            label = frame_name_map[fid]
+            lines.append(f"  {label}: {len(asset_lists[fid])} assets, {len(hash_maps[fid])} unique hashes")
+
         total_synced = 0
         total_skipped = 0
+        pair_summaries: List[Dict[str, Any]] = []
 
         for source_id in unique_frame_ids:
             for target_id in unique_frame_ids:
@@ -1022,7 +1215,7 @@ class AuraManager:
                 lines.append(f"{source_label} -> {target_label}")
                 lines.append("=" * 60)
 
-                synced, skipped, pair_lines = self.sync_frames_detailed(
+                synced, skipped, pair_lines, pair_summary = self.sync_frames_detailed(
                     source_id,
                     target_id,
                     photos_only=photos_only,
@@ -1030,14 +1223,17 @@ class AuraManager:
                     dry_run=dry_run,
                     source_label=source_label,
                     target_label=target_label,
+                    _precomputed_assets=asset_lists,
+                    _precomputed_hashes=hash_maps,
                 )
                 total_synced += synced
                 total_skipped += skipped
                 lines.extend(pair_lines)
+                pair_summaries.append(pair_summary)
 
         lines.append("")
         lines.append(f"Summary: {total_synced} synced, {total_skipped} skipped")
-        return total_synced, total_skipped, lines
+        return total_synced, total_skipped, lines, pair_summaries
 
     def sync_all_frames(
         self,
@@ -1048,8 +1244,8 @@ class AuraManager:
         """
         Synchronize all assets across all configured frames.
         
-        Makes all frames have the same content by syncing from each frame
-        to all other frames.
+        Lists and hashes all frames once upfront, then syncs every pair
+        using the cached data.
         
         Args:
             photos_only: If True, only sync photos.
@@ -1059,9 +1255,18 @@ class AuraManager:
         Returns:
             Dictionary mapping "source->target" to (synced, skipped) counts.
         """
-        results = {}
         frames = self.config["frames"]
-        
+        all_frame_ids = [f["frame_id"] for f in frames]
+
+        # List + download + hash every frame exactly once
+        print("Preparing all frames (listing, downloading, hashing)...")
+        asset_lists, hash_maps = self._prepare_frame_hashes(
+            all_frame_ids,
+            photos_only=photos_only,
+            videos_only=videos_only,
+        )
+
+        results = {}
         for source in frames:
             for target in frames:
                 if source["frame_id"] == target["frame_id"]:
@@ -1077,7 +1282,9 @@ class AuraManager:
                     target["frame_id"],
                     photos_only=photos_only,
                     videos_only=videos_only,
-                    dry_run=dry_run
+                    dry_run=dry_run,
+                    _precomputed_assets=asset_lists,
+                    _precomputed_hashes=hash_maps,
                 )
         
         return results

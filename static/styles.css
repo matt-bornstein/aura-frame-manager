@@ -983,6 +983,11 @@ select.input {
     margin-bottom: 0;
 }
 
+.sync-options-row {
+    display: flex;
+    gap: 24px;
+}
+
 .sync-output {
     width: 100%;
     min-height: 160px;
@@ -997,6 +1002,74 @@ select.input {
     line-height: 1.4;
     resize: vertical;
     white-space: pre;
+}
+
+.sync-summary {
+    width: 100%;
+    max-height: 320px;
+    overflow-y: auto;
+    border: 1px solid var(--border-color);
+    border-radius: var(--border-radius);
+    background: var(--bg-primary);
+    padding: 12px;
+}
+
+.sync-summary-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+}
+
+.sync-summary-table th {
+    text-align: left;
+    font-weight: 600;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-secondary);
+    padding: 8px 10px;
+    border-bottom: 2px solid var(--border-color);
+    white-space: nowrap;
+}
+
+.sync-summary-table td {
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border-color);
+    color: var(--text-primary);
+}
+
+.sync-summary-table tr:last-child td {
+    border-bottom: none;
+}
+
+.sync-summary-table .num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+.sync-summary-table .transferred {
+    font-weight: 600;
+    color: var(--color-primary);
+}
+
+.sync-summary-table .failed {
+    color: var(--color-danger);
+    font-weight: 600;
+}
+
+.sync-summary-totals {
+    margin-top: 12px;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-secondary);
+    text-align: right;
+}
+
+.sync-summary-empty {
+    color: var(--text-muted);
+    font-size: 13px;
+    text-align: center;
+    padding: 16px 0;
 }
 
 /* =============================================================================

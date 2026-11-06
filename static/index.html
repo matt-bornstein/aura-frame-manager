@@ -243,15 +243,20 @@
                     <div class="sync-frame-list" id="syncFrameList"></div>
                 </div>
                 
-                <div class="form-group">
+                <div class="form-group sync-options-row">
                     <label class="checkbox-label">
                         <input type="checkbox" id="syncDryRun" disabled>
                         <span>Dry run (preview only)</span>
+                    </label>
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="syncVerbose">
+                        <span>Verbose output</span>
                     </label>
                 </div>
 
                 <div class="form-group">
                     <label class="input-label">Output</label>
+                    <div class="sync-summary" id="syncSummary" style="display: none;"></div>
                     <textarea class="sync-output" id="syncOutput" readonly></textarea>
                 </div>
             </div>

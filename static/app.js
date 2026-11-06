@@ -303,10 +303,12 @@ const elements = {
     syncModal: document.getElementById('syncModal'),
     syncFrameList: document.getElementById('syncFrameList'),
     syncDryRun: document.getElementById('syncDryRun'),
+    syncVerbose: document.getElementById('syncVerbose'),
     closeSyncModal: document.getElementById('closeSyncModal'),
     cancelSyncBtn: document.getElementById('cancelSyncBtn'),
     syncOnceBtn: document.getElementById('syncOnceBtn'),
     syncOutput: document.getElementById('syncOutput'),
+    syncSummary: document.getElementById('syncSummary'),
 
     // Asset Modal
     assetModal: document.getElementById('assetModal'),
@@ -847,10 +849,18 @@ async function startUpload() {
 // Sync Modal
 // =============================================================================
 
+// Last sync result stored so the verbose toggle can switch views
+let lastSyncResult = null;
+
 function openSyncModal() {
     renderSyncFrameList();
     elements.syncDryRun.checked = false;
+    elements.syncVerbose.checked = false;
     elements.syncOutput.value = '';
+    elements.syncSummary.style.display = 'none';
+    elements.syncSummary.innerHTML = '';
+    elements.syncOutput.style.display = '';
+    lastSyncResult = null;
     updateSyncControls();
     elements.syncModal.classList.add('open');
 }
@@ -893,6 +903,62 @@ function setSyncOutput(lines) {
     elements.syncOutput.scrollTop = elements.syncOutput.scrollHeight;
 }
 
+function renderSyncSummary(result) {
+    const summaries = result.pair_summaries || [];
+    if (summaries.length === 0) {
+        elements.syncSummary.innerHTML = '<p class="sync-summary-empty">No pair data available.</p>';
+        return;
+    }
+
+    const dryLabel = result.dry_run ? ' (dry run)' : '';
+
+    let html = `<table class="sync-summary-table">
+        <thead>
+            <tr>
+                <th>Source</th>
+                <th>Target</th>
+                <th>Source Assets</th>
+                <th>Target Assets</th>
+                <th>Transferred${dryLabel}</th>
+                <th>Failed</th>
+            </tr>
+        </thead>
+        <tbody>`;
+
+    for (const s of summaries) {
+        html += `<tr>
+            <td>${s.source_label}</td>
+            <td>${s.target_label}</td>
+            <td class="num">${s.source_assets}</td>
+            <td class="num">${s.target_assets}</td>
+            <td class="num transferred">${s.transferred}</td>
+            <td class="num ${s.failed > 0 ? 'failed' : ''}">${s.failed}</td>
+        </tr>`;
+    }
+
+    html += `</tbody></table>`;
+    html += `<p class="sync-summary-totals">Total: ${result.total_synced} transferred, ${result.total_skipped} failed</p>`;
+    elements.syncSummary.innerHTML = html;
+}
+
+function applySyncVerboseToggle() {
+    const verbose = elements.syncVerbose.checked;
+    if (verbose) {
+        elements.syncSummary.style.display = 'none';
+        elements.syncOutput.style.display = '';
+    } else {
+        if (lastSyncResult && lastSyncResult.pair_summaries) {
+            renderSyncSummary(lastSyncResult);
+            elements.syncSummary.style.display = '';
+            elements.syncOutput.style.display = 'none';
+        } else {
+            // No summary data yet, keep showing output
+            elements.syncSummary.style.display = 'none';
+            elements.syncOutput.style.display = '';
+        }
+    }
+}
+
 function setSyncInputsDisabled(disabled) {
     elements.syncFrameList.querySelectorAll('input[type="checkbox"]').forEach(input => {
         input.disabled = disabled;
@@ -914,7 +980,11 @@ async function startSync() {
     btnText.style.display = 'none';
     btnLoading.style.display = 'flex';
     setSyncInputsDisabled(true);
+    lastSyncResult = null;
 
+    // While running, always show verbose output
+    elements.syncSummary.style.display = 'none';
+    elements.syncOutput.style.display = '';
     setSyncOutput([
         `${dryRun ? 'Dry run' : 'Sync'} started...`,
         `Frames: ${selectedIds.join(', ')}`,
@@ -924,9 +994,13 @@ async function startSync() {
 
     try {
         const result = await api.syncSelectedFrames(selectedIds, { dryRun });
+        lastSyncResult = result;
         const lines = Array.isArray(result.lines) ? result.lines : [result.message];
         setSyncOutput(lines);
         showToast(result.message);
+
+        // Apply the current verbose toggle state to show summary or verbose
+        applySyncVerboseToggle();
 
         if (!dryRun && state.currentFrameId && selectedIds.includes(state.currentFrameId)) {
             await loadAssets();
@@ -934,6 +1008,7 @@ async function startSync() {
         }
     } catch (error) {
         console.error('Sync failed:', error);
+        lastSyncResult = null;
         setSyncOutput([`Sync failed: ${error.message}`]);
         showToast('Sync failed: ' + error.message, 'error');
     } finally {
@@ -1127,6 +1202,7 @@ function initEventListeners() {
     elements.closeSyncModal.addEventListener('click', closeSyncModal);
     elements.cancelSyncBtn.addEventListener('click', closeSyncModal);
     elements.syncOnceBtn.addEventListener('click', startSync);
+    elements.syncVerbose.addEventListener('change', applySyncVerboseToggle);
 
     // Asset modal
     elements.closeAssetModal.addEventListener('click', closeAssetModal);

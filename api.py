@@ -119,6 +119,16 @@ class SyncSelectedRequest(BaseModel):
     dry_run: bool = False
 
 
+class SyncPairSummary(BaseModel):
+    """Summary of a single source->target sync pair."""
+    source_label: str
+    target_label: str
+    source_assets: int
+    target_assets: int
+    transferred: int
+    failed: int
+
+
 class SyncSelectedResponse(BaseModel):
     """Response model for selected frame sync with detailed output."""
     success: bool
@@ -127,6 +137,7 @@ class SyncSelectedResponse(BaseModel):
     total_synced: int = 0
     total_skipped: int = 0
     lines: List[str] = []
+    pair_summaries: List[SyncPairSummary] = []
 
 
 class UploadRequest(BaseModel):
@@ -646,7 +657,7 @@ async def sync_selected_frames(request: SyncSelectedRequest):
     manager = get_aura()
 
     try:
-        total_synced, total_skipped, lines = manager.sync_selected_frames(
+        total_synced, total_skipped, lines, pair_summaries = manager.sync_selected_frames(
             request.frame_ids,
             dry_run=request.dry_run,
         )
@@ -660,6 +671,7 @@ async def sync_selected_frames(request: SyncSelectedRequest):
             total_synced=total_synced,
             total_skipped=total_skipped,
             lines=lines,
+            pair_summaries=[SyncPairSummary(**s) for s in pair_summaries],
         )
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
